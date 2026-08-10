@@ -155,6 +155,23 @@ pub struct GreedyConfig {
     pub chunks: usize,
     /// Profiles cycled across attempts.
     pub profiles: Vec<JitterProfile>,
+    /// Players forced into every lineup, each already assigned to the slot group
+    /// that will hold it: `(player, slot_group)`.
+    ///
+    /// The assignment arrives decided rather than being worked out here. Choosing
+    /// which slot holds which lock is a bipartite matching — two locks both
+    /// eligible for the flex, only one of which can also play tight end — and
+    /// resolving it greedily mid-fill would reject rosters that are perfectly
+    /// legal. It depends only on eligibility and slot counts, so it is settled
+    /// once, before construction, where it can be done properly and explained.
+    pub locks: Vec<(u32, usize)>,
+    /// Per-player ceiling on how many returned lineups may contain that player.
+    /// Empty means uncapped; `u32::MAX` means uncapped for one player.
+    ///
+    /// A count rather than a fraction, because the fraction is of the *requested*
+    /// portfolio size. Deriving it from the running total instead would put the
+    /// very first lineup over any cap below 100%.
+    pub exposure_limits: Vec<u32>,
 }
 
 impl Default for GreedyConfig {
@@ -166,6 +183,8 @@ impl Default for GreedyConfig {
             attempts_per_lineup: 3,
             chunks: 64,
             profiles: vec![JitterProfile::CONTRARIAN, JitterProfile::STANDARD],
+            locks: Vec::new(),
+            exposure_limits: Vec::new(),
         }
     }
 }
@@ -188,6 +207,25 @@ pub enum BuildError {
     NoProfiles,
     /// Zero chunks, which would do no work.
     NoChunks,
+    /// A lock names a player or a slot group that does not exist.
+    LockOutOfRange {
+        player: u32,
+        slot_group: usize,
+        n_players: usize,
+        n_slot_groups: usize,
+    },
+    /// A lock puts a player in a slot they cannot fill.
+    LockNotEligible { player: u32, slot_group: usize },
+    /// More locks were assigned to a slot group than it has slots.
+    OverfilledSlotGroup {
+        slot_group: usize,
+        locks: usize,
+        count: usize,
+    },
+    /// The same player is locked twice.
+    DuplicateLock(u32),
+    /// The exposure-limit column disagrees with the pool.
+    ExposureLengthMismatch { len: usize, expected: usize },
 }
 
 impl std::fmt::Display for BuildError {
@@ -204,6 +242,38 @@ impl std::fmt::Display for BuildError {
             ),
             Self::NoProfiles => write!(f, "config.profiles is empty; supply at least one"),
             Self::NoChunks => write!(f, "config.chunks is 0; supply at least one"),
+            Self::LockOutOfRange {
+                player,
+                slot_group,
+                n_players,
+                n_slot_groups,
+            } => write!(
+                f,
+                "lock ({player}, slot group {slot_group}) is out of range for a pool of \
+                 {n_players} players and {n_slot_groups} slot groups"
+            ),
+            Self::LockNotEligible { player, slot_group } => write!(
+                f,
+                "player {player} is locked into slot group {slot_group}, which they are \
+                 not eligible to fill"
+            ),
+            Self::OverfilledSlotGroup {
+                slot_group,
+                locks,
+                count,
+            } => write!(
+                f,
+                "slot group {slot_group} has {count} slot(s) but {locks} locked player(s)"
+            ),
+            Self::DuplicateLock(player) => write!(
+                f,
+                "player {player} is locked more than once, but a lineup cannot hold \
+                 the same player twice"
+            ),
+            Self::ExposureLengthMismatch { len, expected } => write!(
+                f,
+                "exposure_limits has {len} entries but the pool has {expected} players"
+            ),
         }
     }
 }
@@ -237,6 +307,54 @@ pub fn build_lineups(
     }
     if config.chunks == 0 {
         return Err(BuildError::NoChunks);
+    }
+    if !config.exposure_limits.is_empty() && config.exposure_limits.len() != pool.len() {
+        return Err(BuildError::ExposureLengthMismatch {
+            len: config.exposure_limits.len(),
+            expected: pool.len(),
+        });
+    }
+    // Locks are grouped by the slot that will hold them, so the fill can place
+    // them without searching. Validated first: every one of these mistakes would
+    // otherwise present as an empty result, and "no valid lineups" says nothing
+    // about a player having been locked into a slot they cannot fill.
+    //
+    // Left empty when nothing is locked, so the fill can test one length and skip
+    // the whole mechanism — including the per-chunk `is_locked` column, which
+    // would otherwise be an allocation proportional to the pool on every chunk of
+    // every build that does not use locks.
+    let mut locked_by_slot: Vec<Vec<u32>> = if config.locks.is_empty() {
+        Vec::new()
+    } else {
+        vec![Vec::new(); spec.slots.len()]
+    };
+    let mut seen_locks: Vec<u32> = Vec::with_capacity(config.locks.len());
+    for &(player, slot_group) in &config.locks {
+        if player as usize >= pool.len() || slot_group >= spec.slots.len() {
+            return Err(BuildError::LockOutOfRange {
+                player,
+                slot_group,
+                n_players: pool.len(),
+                n_slot_groups: spec.slots.len(),
+            });
+        }
+        if pool.positions[player as usize] & spec.slots[slot_group].eligible == 0 {
+            return Err(BuildError::LockNotEligible { player, slot_group });
+        }
+        if seen_locks.contains(&player) {
+            return Err(BuildError::DuplicateLock(player));
+        }
+        seen_locks.push(player);
+        locked_by_slot[slot_group].push(player);
+    }
+    for (slot_group, locks) in locked_by_slot.iter().enumerate() {
+        if locks.len() > spec.slots[slot_group].count {
+            return Err(BuildError::OverfilledSlotGroup {
+                slot_group,
+                locks: locks.len(),
+                count: spec.slots[slot_group].count,
+            });
+        }
     }
     if config.num_lineups == 0 || pool.len() < spec.roster_size() {
         return Ok(Vec::new());
@@ -343,6 +461,7 @@ pub fn build_lineups(
                 &cheapest,
                 &suffix_cost,
                 slot_salaries,
+                &locked_by_slot,
             );
             let mut rng = Xoshiro256PlusPlus::seed_from_u64(
                 config.seed ^ (chunk as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15),
@@ -367,6 +486,17 @@ pub fn build_lineups(
 
     // Merge in chunk order, deduplicating again: two chunks can independently
     // find the same lineup, and chunk order is fixed so the merge is stable.
+    //
+    // Exposure caps are applied *here* rather than during construction, and that
+    // placement is the whole design. A cap is a property of the portfolio, not of
+    // a lineup; enforcing it inside the chunks would mean either sharing mutable
+    // counts between them — which destroys the determinism guarantee, since the
+    // answer would depend on how rayon interleaved them — or capping each chunk
+    // separately, which is a different and weaker constraint. The merge is
+    // already sequential and already in a fixed order, so it is the one place
+    // that can see the whole portfolio and still reproduce exactly.
+    let capping = !config.exposure_limits.is_empty();
+    let mut exposure = vec![0u32; if capping { pool.len() } else { 0 }];
     let mut seen: HashSet<Lineup> = HashSet::new();
     let mut all: Vec<Lineup> = Vec::with_capacity(config.num_lineups);
     for chunk in chunk_results {
@@ -374,9 +504,21 @@ pub fn build_lineups(
             if all.len() >= config.num_lineups {
                 return Ok(all);
             }
+            if capping
+                && lineup
+                    .iter()
+                    .any(|&p| exposure[p as usize] >= config.exposure_limits[p as usize])
+            {
+                continue;
+            }
             let mut key = lineup.clone();
             key.sort_unstable();
             if seen.insert(key) {
+                if capping {
+                    for &player in &lineup {
+                        exposure[player as usize] += 1;
+                    }
+                }
                 all.push(lineup);
             }
         }
@@ -396,6 +538,12 @@ struct Builder<'a> {
     suffix_cost: &'a [i64],
     /// What every player costs in every slot group.
     slot_salaries: SlotSalaries<'a>,
+    /// Players forced into each slot group, bucketed by that group.
+    locked_by_slot: &'a [Vec<u32>],
+    /// Whether each player is locked, by pool index. Repair consults this to
+    /// leave locks alone; a lock swapped out to reach the salary floor is not a
+    /// lock.
+    is_locked: Vec<bool>,
     objective: Vec<f64>,
     used: Vec<bool>,
     /// How many rostered players each player conflicts with. A candidate is
@@ -420,9 +568,19 @@ impl<'a> Builder<'a> {
         cheapest: &'a [Vec<i64>],
         suffix_cost: &'a [i64],
         slot_salaries: SlotSalaries<'a>,
+        locked_by_slot: &'a [Vec<u32>],
     ) -> Self {
         let n = pool.len();
         let roster_size = spec.roster_size();
+        // Not allocated at all without locks, which is nearly every build; this
+        // runs once per chunk, so an unconditional column would be 64 pool-sized
+        // allocations for nothing.
+        let mut is_locked = vec![false; if locked_by_slot.is_empty() { 0 } else { n }];
+        for group in locked_by_slot {
+            for &player in group {
+                is_locked[player as usize] = true;
+            }
+        }
         Self {
             pool,
             spec,
@@ -430,6 +588,8 @@ impl<'a> Builder<'a> {
             cheapest,
             suffix_cost,
             slot_salaries,
+            locked_by_slot,
+            is_locked,
             objective: vec![0.0; n],
             used: vec![false; n],
             // Not allocated at all without conflicts, so the spec that does not
@@ -483,8 +643,52 @@ impl<'a> Builder<'a> {
         // branch predictor sees as constant, and never touches `blocked` at all
         // for the overwhelmingly common spec that declares no conflicts.
         let has_conflicts = !self.spec.conflicts.is_empty();
+        let has_locks = !self.locked_by_slot.is_empty();
 
         for (group_idx, slot) in self.spec.slots.iter().enumerate() {
+            // One row for the whole slot group: what each player costs *here*.
+            let salaries = self.slot_salaries.row(group_idx);
+            let mut picked = 0;
+
+            // Locked players go in before anything is considered, so the greedy
+            // pass sees the budget and the group counts they have already spent
+            // rather than discovering them afterwards. Placing them last would
+            // routinely leave nothing affordable for a lock the caller insisted
+            // on, which is the opposite of what locking is for.
+            //
+            // A lock that will not fit fails the whole attempt. Unlike a greedy
+            // pick there is no alternative to fall back to, and the failure is
+            // deterministic — the same lock fails on every attempt — so this
+            // surfaces as an empty result rather than a slow one.
+            for &player in if has_locks {
+                &self.locked_by_slot[group_idx][..]
+            } else {
+                &[][..]
+            } {
+                let p = player as usize;
+                let still_needed = slot.count - picked - 1;
+                let prefix = &self.cheapest[group_idx];
+                let remaining =
+                    prefix[still_needed.min(prefix.len() - 1)] + self.suffix_cost[group_idx + 1];
+                if salary + salaries[p] + remaining > self.spec.salary_cap
+                    || self.tally.would_exceed(p, group_idx)
+                    || (has_conflicts && self.blocked[p] != 0)
+                {
+                    return None;
+                }
+                self.used[p] = true;
+                self.tally.add(p, group_idx);
+                if has_conflicts {
+                    for &other in self.spec.conflicts.neighbors(p) {
+                        self.blocked[other as usize] += 1;
+                    }
+                }
+                salary += salaries[p];
+                self.lineup.push(player);
+                self.slot_of.push(group_idx);
+                picked += 1;
+            }
+
             self.candidates.clear();
             self.candidates.extend(
                 self.eligible[group_idx]
@@ -502,10 +706,6 @@ impl<'a> Builder<'a> {
                     .then(a.cmp(&b))
             });
 
-            // One row for the whole slot group: what each player costs *here*.
-            let salaries = self.slot_salaries.row(group_idx);
-
-            let mut picked = 0;
             for &player in &self.candidates {
                 if picked == slot.count {
                     break;
@@ -583,6 +783,9 @@ impl<'a> Builder<'a> {
 
         for slot_index in order {
             let outgoing = self.lineup[slot_index] as usize;
+            if !self.is_locked.is_empty() && self.is_locked[outgoing] {
+                continue;
+            }
             let group_idx = self.slot_of[slot_index];
             let salaries = self.slot_salaries.row(group_idx);
             let outgoing_salary = salaries[outgoing];
@@ -1220,6 +1423,278 @@ mod tests {
                 SpecError::ConflictGraphLengthMismatch { .. }
             ))
         ));
+    }
+
+    // --- Locks ------------------------------------------------------------
+
+    #[test]
+    fn a_locked_player_appears_in_every_lineup() {
+        let pool = make_pool();
+        let spec = tiny_spec(team_ids(16), 30_000, 0);
+        // Player 1 is a catcher; slot group 0 is the catcher slot.
+        let mut cfg = config(40);
+        cfg.locks = vec![(1, 0)];
+        let lineups = build_lineups(&pool.view(), &spec, &cfg).unwrap();
+        assert!(!lineups.is_empty());
+        assert_all_valid(&lineups, &pool.view(), &spec);
+        for lineup in &lineups {
+            assert_eq!(lineup[0], 1, "the lock is not in its slot: {lineup:?}");
+        }
+    }
+
+    #[test]
+    fn locking_a_player_the_greedy_would_not_pick_still_works() {
+        // The cheapest catcher has the worst projection, so an unlocked build
+        // rarely takes them. If locking only nudged the objective rather than
+        // forcing the pick, this would come back mixed.
+        let pool = make_pool();
+        let spec = tiny_spec(team_ids(16), 30_000, 0);
+        let mut cfg = config(40);
+        cfg.locks = vec![(0, 0)];
+        let lineups = build_lineups(&pool.view(), &spec, &cfg).unwrap();
+        assert!(!lineups.is_empty());
+        assert!(lineups.iter().all(|l| l[0] == 0));
+    }
+
+    #[test]
+    fn locks_fill_several_slots_of_one_group() {
+        let pool = make_pool();
+        let spec = tiny_spec(team_ids(16), 30_000, 0);
+        // Both outfield slots, which is slot group 1.
+        let mut cfg = config(40);
+        cfg.locks = vec![(4, 1), (5, 1)];
+        let lineups = build_lineups(&pool.view(), &spec, &cfg).unwrap();
+        assert!(!lineups.is_empty());
+        assert_all_valid(&lineups, &pool.view(), &spec);
+        for lineup in &lineups {
+            assert_eq!(&lineup[1..3], &[4, 5]);
+        }
+    }
+
+    #[test]
+    fn locks_survive_salary_repair() {
+        // Repair reaches the floor by swapping the cheapest player out. A lock is
+        // often exactly that player, and swapping it would silently undo the one
+        // thing the caller insisted on.
+        let pool = make_pool();
+        let spec = tiny_spec(team_ids(16), 22_000, 20_000);
+        let mut cfg = config(40);
+        cfg.locks = vec![(0, 0)];
+        let lineups = build_lineups(&pool.view(), &spec, &cfg).unwrap();
+        assert!(!lineups.is_empty(), "repair recovered nothing to check");
+        assert_all_valid(&lineups, &pool.view(), &spec);
+        for lineup in &lineups {
+            assert!(
+                lineup.contains(&0),
+                "repair swapped the lock out: {lineup:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_lock_that_cannot_fit_returns_nothing_rather_than_looping() {
+        let pool = make_pool();
+        // The cheapest legal roster costs 12_700; the dearest catcher pushes the
+        // same roster to 14_800. A cap between the two is satisfiable in general
+        // and unsatisfiable with that catcher locked in.
+        let spec = tiny_spec(team_ids(16), 14_000, 0);
+        assert!(
+            !build_lineups(&pool.view(), &spec, &config(20))
+                .unwrap()
+                .is_empty(),
+            "the cap alone should be satisfiable"
+        );
+
+        let mut cfg = config(20);
+        cfg.locks = vec![(3, 0)];
+        // Empty, not a lineup without the lock: a lock the caller cannot have is
+        // not quietly dropped.
+        assert!(build_lineups(&pool.view(), &spec, &cfg).unwrap().is_empty());
+    }
+
+    #[test]
+    fn locks_respect_group_caps() {
+        let pool = make_pool();
+        // Everyone on one team with a cap of 3, and a 4-player roster: locking
+        // does not get to override a constraint.
+        let spec = tiny_spec(vec![0; 16], 30_000, 0);
+        let mut cfg = config(10);
+        cfg.locks = vec![(0, 0)];
+        assert!(build_lineups(&pool.view(), &spec, &cfg).unwrap().is_empty());
+    }
+
+    #[test]
+    fn locking_two_conflicting_players_yields_nothing() {
+        let pool = make_pool();
+        let mut spec = tiny_spec(team_ids(16), 30_000, 0);
+        spec.conflicts = ConflictGraph::from_pairs([(0u32, 12u32)], 16);
+        let mut cfg = config(20);
+        cfg.locks = vec![(0, 0), (12, 2)];
+        assert!(build_lineups(&pool.view(), &spec, &cfg).unwrap().is_empty());
+    }
+
+    #[test]
+    fn locking_no_one_changes_nothing() {
+        // The opt-in must be inert, or every committed seed and benchmark moved.
+        let pool = make_pool();
+        let spec = tiny_spec(team_ids(16), 30_000, 0);
+        let mut empty = config(40);
+        empty.locks = Vec::new();
+        assert_eq!(
+            build_lineups(&pool.view(), &spec, &config(40)).unwrap(),
+            build_lineups(&pool.view(), &spec, &empty).unwrap()
+        );
+    }
+
+    #[test]
+    fn a_lock_naming_a_missing_player_is_rejected() {
+        let pool = make_pool();
+        let spec = tiny_spec(team_ids(16), 30_000, 0);
+        let mut cfg = config(10);
+        cfg.locks = vec![(99, 0)];
+        assert!(matches!(
+            build_lineups(&pool.view(), &spec, &cfg),
+            Err(BuildError::LockOutOfRange { player: 99, .. })
+        ));
+    }
+
+    #[test]
+    fn a_lock_into_a_slot_the_player_cannot_fill_is_rejected() {
+        // Reported rather than returned as an empty result: "no valid lineups"
+        // says nothing about a pitcher having been locked into the catcher slot.
+        let pool = make_pool();
+        let spec = tiny_spec(team_ids(16), 30_000, 0);
+        let mut cfg = config(10);
+        cfg.locks = vec![(12, 0)];
+        assert_eq!(
+            build_lineups(&pool.view(), &spec, &cfg),
+            Err(BuildError::LockNotEligible {
+                player: 12,
+                slot_group: 0
+            })
+        );
+    }
+
+    #[test]
+    fn more_locks_than_a_slot_group_holds_is_rejected() {
+        let pool = make_pool();
+        let spec = tiny_spec(team_ids(16), 30_000, 0);
+        let mut cfg = config(10);
+        cfg.locks = vec![(0, 0), (1, 0)];
+        assert_eq!(
+            build_lineups(&pool.view(), &spec, &cfg),
+            Err(BuildError::OverfilledSlotGroup {
+                slot_group: 0,
+                locks: 2,
+                count: 1
+            })
+        );
+    }
+
+    #[test]
+    fn locking_the_same_player_twice_is_rejected() {
+        let pool = make_pool();
+        let spec = tiny_spec(team_ids(16), 30_000, 0);
+        let mut cfg = config(10);
+        cfg.locks = vec![(4, 1), (4, 1)];
+        assert_eq!(
+            build_lineups(&pool.view(), &spec, &cfg),
+            Err(BuildError::DuplicateLock(4))
+        );
+    }
+
+    // --- Exposure caps ----------------------------------------------------
+
+    #[test]
+    fn an_exposure_cap_bounds_how_often_a_player_appears() {
+        let pool = make_pool();
+        let spec = tiny_spec(team_ids(16), 30_000, 0);
+        let uncapped = build_lineups(&pool.view(), &spec, &config(40)).unwrap();
+        let busiest = (0..16u32)
+            .max_by_key(|p| uncapped.iter().filter(|l| l.contains(p)).count())
+            .unwrap();
+        let before = uncapped.iter().filter(|l| l.contains(&busiest)).count();
+        assert!(before > 3, "nothing appeared often enough to cap");
+
+        let mut cfg = config(40);
+        let mut limits = vec![u32::MAX; 16];
+        limits[busiest as usize] = 3;
+        cfg.exposure_limits = limits;
+        let capped = build_lineups(&pool.view(), &spec, &cfg).unwrap();
+        assert_all_valid(&capped, &pool.view(), &spec);
+        assert!(capped.iter().filter(|l| l.contains(&busiest)).count() <= 3);
+    }
+
+    #[test]
+    fn an_exposure_cap_of_zero_excludes_a_player_entirely() {
+        let pool = make_pool();
+        let spec = tiny_spec(team_ids(16), 30_000, 0);
+        let mut cfg = config(40);
+        let mut limits = vec![u32::MAX; 16];
+        limits[4] = 0;
+        cfg.exposure_limits = limits;
+        let lineups = build_lineups(&pool.view(), &spec, &cfg).unwrap();
+        assert!(!lineups.is_empty());
+        assert!(lineups.iter().all(|l| !l.contains(&4)));
+    }
+
+    #[test]
+    fn exposure_caps_are_deterministic() {
+        // The cap is applied at the merge, which is sequential and in fixed chunk
+        // order. If it had been applied inside the parallel region the answer
+        // would depend on how rayon interleaved the chunks.
+        let pool = make_pool();
+        let spec = tiny_spec(team_ids(16), 30_000, 0);
+        let mut cfg = config(40);
+        cfg.exposure_limits = vec![2; 16];
+        let a = build_lineups(&pool.view(), &spec, &cfg).unwrap();
+        let b = build_lineups(&pool.view(), &spec, &cfg).unwrap();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn a_tight_exposure_cap_returns_fewer_lineups_rather_than_illegal_ones() {
+        let pool = make_pool();
+        let spec = tiny_spec(team_ids(16), 30_000, 0);
+        let mut cfg = config(40);
+        cfg.exposure_limits = vec![1; 16];
+        let lineups = build_lineups(&pool.view(), &spec, &cfg).unwrap();
+        assert!(lineups.len() < 40, "the cap did not bind");
+        assert_all_valid(&lineups, &pool.view(), &spec);
+        // At most one appearance each means no player is repeated across lineups.
+        let mut seen = std::collections::HashSet::new();
+        for lineup in &lineups {
+            for &player in lineup {
+                assert!(seen.insert(player), "player {player} exceeded a cap of 1");
+            }
+        }
+    }
+
+    #[test]
+    fn uncapped_exposure_changes_nothing() {
+        let pool = make_pool();
+        let spec = tiny_spec(team_ids(16), 30_000, 0);
+        let mut all_max = config(40);
+        all_max.exposure_limits = vec![u32::MAX; 16];
+        assert_eq!(
+            build_lineups(&pool.view(), &spec, &config(40)).unwrap(),
+            build_lineups(&pool.view(), &spec, &all_max).unwrap()
+        );
+    }
+
+    #[test]
+    fn an_exposure_column_for_the_wrong_pool_is_rejected() {
+        let pool = make_pool();
+        let spec = tiny_spec(team_ids(16), 30_000, 0);
+        let mut cfg = config(10);
+        cfg.exposure_limits = vec![1; 8];
+        assert_eq!(
+            build_lineups(&pool.view(), &spec, &cfg),
+            Err(BuildError::ExposureLengthMismatch {
+                len: 8,
+                expected: 16
+            })
+        );
     }
 
     #[test]

@@ -27,7 +27,7 @@ import pytest
 from baselines.reference import build_lineups_reference, is_valid, validity_report
 from mlb_dfs_solver import build_lineups
 from mlb_dfs_solver.pool import PlayerPool
-from mlb_dfs_solver.spec import RosterSpec
+from mlb_dfs_solver.spec import GroupConstraint, RosterSpec
 
 
 def test_kernel_lineups_are_all_valid(tiny_pool: PlayerPool, tiny_spec: RosterSpec) -> None:
@@ -308,3 +308,82 @@ def test_both_enforce_conflicts_through_salary_repair(tiny_spec: RosterSpec) -> 
     assert validity_report(kernel, pool, spec) == ""
     for lineup in reference:
         assert is_valid(lineup, pool, spec), lineup
+
+
+# --- Locks and exposure caps ---------------------------------------------
+
+
+def test_both_honour_the_same_locks(tiny_pool: PlayerPool, tiny_spec: RosterSpec) -> None:
+    locks = [9, 17]
+    kernel = build_lineups(tiny_pool, tiny_spec, num_lineups=40, seed=31, locks=locks)
+    reference = build_lineups_reference(tiny_pool, tiny_spec, num_lineups=40, seed=31, locks=locks)
+    assert len(kernel) > 0
+    assert reference
+    assert validity_report(kernel, tiny_pool, tiny_spec) == ""
+    for lineup in kernel.tolist():
+        assert set(locks) <= set(lineup)
+    for lineup in reference:
+        assert is_valid(lineup, tiny_pool, tiny_spec), lineup
+        assert set(locks) <= set(lineup)
+
+
+def test_both_place_locks_in_the_same_slots(tiny_pool: PlayerPool, tiny_spec: RosterSpec) -> None:
+    # The slot a lock lands in is decided by assign_locks, which both call, so
+    # the two must agree on the column even though they disagree on the rest.
+    locks = [9, 17]
+    kernel = build_lineups(tiny_pool, tiny_spec, num_lineups=20, seed=31, locks=locks)
+    reference = build_lineups_reference(tiny_pool, tiny_spec, num_lineups=20, seed=31, locks=locks)
+    assert all(lineup[0] == 9 and lineup[1] == 17 for lineup in kernel.tolist())
+    assert all(lineup[0] == 9 and lineup[1] == 17 for lineup in reference)
+
+
+def test_both_honour_locks_through_salary_repair(
+    tiny_pool: PlayerPool, tiny_spec: RosterSpec
+) -> None:
+    from dataclasses import replace
+
+    spec = replace(tiny_spec, salary_cap=22_000, salary_floor=20_000)
+    kernel = build_lineups(tiny_pool, spec, num_lineups=40, seed=32, locks=[8])
+    reference = build_lineups_reference(tiny_pool, spec, num_lineups=40, seed=32, locks=[8])
+    assert len(kernel) > 0, "repair recovered nothing to check"
+    assert reference
+    assert validity_report(kernel, tiny_pool, spec) == ""
+    assert all(8 in lineup for lineup in kernel.tolist())
+    for lineup in reference:
+        assert is_valid(lineup, tiny_pool, spec), lineup
+        assert 8 in lineup
+
+
+def test_both_return_nothing_for_a_lock_that_cannot_fit(
+    tiny_pool: PlayerPool, tiny_spec: RosterSpec
+) -> None:
+    from dataclasses import replace
+
+    spec = replace(tiny_spec, groups=(GroupConstraint(key="team", max_count=1),))
+    assert len(build_lineups(tiny_pool, spec, num_lineups=20, seed=33, locks=[16, 20])) == 0
+    assert build_lineups_reference(tiny_pool, spec, num_lineups=20, seed=33, locks=[16, 20]) == []
+
+
+def test_both_respect_the_same_exposure_cap(tiny_pool: PlayerPool, tiny_spec: RosterSpec) -> None:
+    kernel = build_lineups(tiny_pool, tiny_spec, num_lineups=40, seed=34, max_exposure=0.25)
+    reference = build_lineups_reference(
+        tiny_pool, tiny_spec, num_lineups=40, seed=34, max_exposure=0.25
+    )
+    assert len(kernel) > 0
+    assert reference
+    assert validity_report(kernel, tiny_pool, tiny_spec) == ""
+    # 25% of the 40 requested is 10, for both, whatever each actually returned.
+    for player in range(len(tiny_pool)):
+        assert sum(player in lineup for lineup in kernel.tolist()) <= 10
+        assert sum(player in lineup for lineup in reference) <= 10
+
+
+def test_both_exclude_a_player_capped_at_zero(tiny_pool: PlayerPool, tiny_spec: RosterSpec) -> None:
+    kernel = build_lineups(tiny_pool, tiny_spec, num_lineups=30, seed=35, max_exposure={15: 0.0})
+    reference = build_lineups_reference(
+        tiny_pool, tiny_spec, num_lineups=30, seed=35, max_exposure={15: 0.0}
+    )
+    assert len(kernel) > 0
+    assert reference
+    assert all(15 not in lineup for lineup in kernel.tolist())
+    assert all(15 not in lineup for lineup in reference)

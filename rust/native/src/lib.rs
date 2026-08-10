@@ -13,7 +13,7 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 
 use mlb_dfs_solver_core::convert::{
-    config_from_arrays, flatten_lineups, spec_from_arrays, SpecArrays,
+    config_from_arrays, flatten_lineups, spec_from_arrays, ConfigArrays, SpecArrays,
 };
 use mlb_dfs_solver_core::greedy::{self, PlayerPool};
 use mlb_dfs_solver_core::simd;
@@ -76,6 +76,9 @@ fn build_lineups<'py>(
     attempts_per_lineup: usize,
     chunks: usize,
     profiles: PyReadonlyArray1<'py, f64>,
+    lock_players: PyReadonlyArray1<'py, u32>,
+    lock_slot_groups: PyReadonlyArray1<'py, u64>,
+    exposure_limits: PyReadonlyArray1<'py, u32>,
 ) -> PyResult<Bound<'py, PyArray2<i64>>> {
     let pool = PlayerPool {
         projections: contiguous(&projections, "projections")?,
@@ -107,14 +110,17 @@ fn build_lineups<'py>(
     )
     .map_err(|e| PyValueError::new_err(e.to_string()))?;
 
-    let config = config_from_arrays(
+    let config = config_from_arrays(ConfigArrays {
         num_lineups,
         seed,
         noise,
         attempts_per_lineup,
         chunks,
-        contiguous(&profiles, "profiles")?,
-    )
+        profiles: contiguous(&profiles, "profiles")?,
+        lock_players: contiguous(&lock_players, "lock_players")?,
+        lock_slot_groups: contiguous(&lock_slot_groups, "lock_slot_groups")?,
+        exposure_limits: contiguous(&exposure_limits, "exposure_limits")?,
+    })
     .map_err(|e| PyValueError::new_err(e.to_string()))?;
 
     let roster_size = spec.roster_size();

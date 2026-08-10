@@ -29,12 +29,14 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass, field
+from math import floor
 from typing import TYPE_CHECKING
 
+from mlb_dfs_solver.greedy import assign_locks
 from mlb_dfs_solver.spec import scaled_salary
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
 
     import numpy as np
     from mlb_dfs_solver.pool import PlayerPool
@@ -88,6 +90,8 @@ def build_lineups_reference(
     attempts_per_lineup: int = 3,
     profiles: Sequence[tuple[tuple[float, float], tuple[float, float]]] | None = None,
     extra_conflict_pairs: Sequence[tuple[int, int]] | None = None,
+    locks: Sequence[int] | Mapping[int, str | None] | None = None,
+    max_exposure: float | Mapping[int, float] | None = None,
 ) -> list[list[int]]:
     """Build distinct valid lineups, in readable Python.
 
@@ -107,6 +111,12 @@ def build_lineups_reference(
         extra_conflict_pairs: Pool-index pairs forbidden from sharing a lineup, on
             top of whatever `spec.conflicts` resolves to. Mirrors the kernel's
             `conflict_pairs` argument.
+        locks: Players forced into every lineup. Slot assignment goes through the
+            same `assign_locks` the wrapper uses — the matching is not part of the
+            algorithm being transcribed, and two implementations of it would be
+            two chances to disagree about which lineups are even reachable.
+        max_exposure: Ceiling on the fraction of returned lineups containing a
+            player.
 
     Returns:
         Lineups as lists of pool indices, in slot order.
@@ -117,6 +127,22 @@ def build_lineups_reference(
     n = len(pool)
     if num_lineups <= 0 or n < spec.roster_size:
         return []
+
+    # Locked players, bucketed by the slot group that will hold them.
+    locked_by_slot: list[list[int]] = [[] for _ in spec.slots]
+    for player, group in assign_locks(pool, spec, locks) if locks else []:
+        locked_by_slot[group].append(player)
+    is_locked = {player for group in locked_by_slot for player in group}
+
+    # Per-player lineup-count ceilings, against the *requested* portfolio size.
+    limits: dict[int, int] = {}
+    if max_exposure is not None:
+        fractions = (
+            {i: float(max_exposure) for i in range(n)}
+            if isinstance(max_exposure, (int, float))
+            else {int(k): float(v) for k, v in max_exposure.items()}
+        )
+        limits = {p: floor(f * num_lineups) for p, f in fractions.items()}
 
     projections = pool.projections.tolist()
     stddevs = pool.stddevs.tolist()
@@ -191,6 +217,10 @@ def build_lineups_reference(
     tally = _Tally(spec, keys, slot_masks)
     seen: set[tuple[int, ...]] = set()
     out: list[list[int]] = []
+    # How many accepted lineups each capped player has appeared in so far. The
+    # kernel keeps the same tally at its merge; here there is only one stream, so
+    # the accept step is the merge.
+    exposure: dict[int, int] = {}
 
     for attempt in range(num_lineups * attempts_per_lineup):
         if len(out) >= num_lineups:
@@ -212,7 +242,16 @@ def build_lineups_reference(
             objective[i] = max(value, 0.01)
 
         filled = _fill(
-            spec, eligible, objective, slot_salaries, tally, n, cheapest, suffix_cost, conflicts
+            spec,
+            eligible,
+            objective,
+            slot_salaries,
+            tally,
+            n,
+            cheapest,
+            suffix_cost,
+            conflicts,
+            locked_by_slot,
         )
         if filled is None:
             continue
@@ -220,7 +259,7 @@ def build_lineups_reference(
 
         if salary < spec.salary_floor:
             repaired = _repair_up(
-                spec, eligible, slot_salaries, tally, lineup, salary, conflicts, n
+                spec, eligible, slot_salaries, tally, lineup, salary, conflicts, n, is_locked
             )
             if repaired is None:
                 continue
@@ -229,9 +268,15 @@ def build_lineups_reference(
         if not (spec.salary_floor <= salary <= spec.salary_cap):
             continue
 
+        if any(exposure.get(p, 0) >= limits[p] for p in lineup if p in limits):
+            continue
+
         key = tuple(sorted(lineup))
         if key not in seen:
             seen.add(key)
+            for player in lineup:
+                if player in limits:
+                    exposure[player] = exposure.get(player, 0) + 1
             out.append(lineup)
 
     return out
@@ -247,6 +292,7 @@ def _fill(
     cheapest: list[list[int]],
     suffix_cost: list[int],
     conflicts: dict[int, set[int]],
+    locked_by_slot: list[list[int]],
 ) -> tuple[list[int], int] | None:
     """Greedily fill every slot; return None if a slot cannot be filled.
 
@@ -266,6 +312,29 @@ def _fill(
 
     for group_idx, slot in enumerate(spec.slots):
         salaries = slot_salaries[group_idx]
+        picked = 0
+
+        # Locked players go in before anything is considered, so the greedy pass
+        # sees the budget they have already spent. A lock that will not fit fails
+        # the whole attempt: unlike a greedy pick there is no fallback, and
+        # dropping it would silently ignore what the caller insisted on.
+        for player in locked_by_slot[group_idx]:
+            still_needed = min(slot.count - picked - 1, len(cheapest[group_idx]) - 1)
+            remaining = cheapest[group_idx][still_needed] + suffix_cost[group_idx + 1]
+            if (
+                salary + salaries[player] + remaining > spec.salary_cap
+                or tally.would_exceed(player, group_idx)
+                or (conflicts and blocked[player])
+            ):
+                return None
+            used[player] = True
+            tally.add(player, group_idx)
+            for other in conflicts.get(player, ()):
+                blocked[other] += 1
+            salary += salaries[player]
+            lineup.append(player)
+            picked += 1
+
         # Descending objective, ties broken by index, matching the Rust sort.
         # The slot's score multiplier is deliberately absent: it scales every
         # candidate alike and so cannot reorder them.
@@ -273,7 +342,6 @@ def _fill(
             (i for i in eligible[group_idx] if not used[i]),
             key=lambda i: (-objective[i], i),
         )
-        picked = 0
         for player in candidates:
             if picked == slot.count:
                 break
@@ -308,6 +376,7 @@ def _repair_up(
     salary: int,
     conflicts: dict[int, set[int]],
     n: int,
+    is_locked: set[int],
 ) -> tuple[list[int], int] | None:
     """Swap one cheap player for a dearer one to clear the salary floor.
 
@@ -343,6 +412,8 @@ def _repair_up(
 
     for slot_index in order:
         outgoing = lineup[slot_index]
+        if outgoing in is_locked:
+            continue
         group_idx = slot_of[slot_index]
         salaries = slot_salaries[group_idx]
         tally.add(outgoing, group_idx, delta=-1)

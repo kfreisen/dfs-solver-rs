@@ -25,6 +25,8 @@ pub enum ConvertError {
     },
     /// The conflict pair arrays disagree on length.
     ConflictPairMismatch { left: usize, right: usize },
+    /// The lock arrays disagree on length.
+    LockArrayMismatch { players: usize, slot_groups: usize },
     /// The per-group arrays disagree on length.
     GroupArrayMismatch {
         key_columns: usize,
@@ -61,6 +63,14 @@ impl std::fmt::Display for ConvertError {
                 f,
                 "conflict_left has {left} entries but conflict_right has {right}; \
                  they are parallel arrays of pairs"
+            ),
+            Self::LockArrayMismatch {
+                players,
+                slot_groups,
+            } => write!(
+                f,
+                "lock_players has {players} entries but lock_slot_groups has \
+                 {slot_groups}; they are parallel arrays"
             ),
             Self::GroupArrayMismatch {
                 key_columns,
@@ -209,34 +219,62 @@ pub fn spec_from_arrays(
     })
 }
 
-/// Rebuild a [`GreedyConfig`]. `profiles` is a flattened `(n, 4)` matrix of
-/// ceiling low/high then leverage low/high.
-pub fn config_from_arrays(
-    num_lineups: usize,
-    seed: u64,
-    noise: f64,
-    attempts_per_lineup: usize,
-    chunks: usize,
-    profiles: &[f64],
-) -> Result<GreedyConfig, ConvertError> {
-    if profiles.len() % 4 != 0 {
+/// Knobs for a run, as they arrive from the caller.
+///
+/// A struct rather than a long positional list for the same reason as
+/// [`SpecArrays`]: several same-typed scalars in a row invite a transposition
+/// that type-checks.
+#[derive(Debug, Clone, Copy)]
+pub struct ConfigArrays<'a> {
+    pub num_lineups: usize,
+    pub seed: u64,
+    pub noise: f64,
+    pub attempts_per_lineup: usize,
+    pub chunks: usize,
+    /// Flattened `(n, 4)` matrix: ceiling low/high then leverage low/high.
+    pub profiles: &'a [f64],
+    /// Player index of each lock, parallel to `lock_slot_groups`.
+    pub lock_players: &'a [u32],
+    /// Slot group each lock is assigned to.
+    pub lock_slot_groups: &'a [u64],
+    /// Per-player lineup-count ceiling. Empty means uncapped.
+    pub exposure_limits: &'a [u32],
+}
+
+/// Rebuild a [`GreedyConfig`] from flat arrays.
+pub fn config_from_arrays(arrays: ConfigArrays<'_>) -> Result<GreedyConfig, ConvertError> {
+    if arrays.profiles.len() % 4 != 0 {
         return Err(ConvertError::RaggedProfileMatrix {
-            len: profiles.len(),
+            len: arrays.profiles.len(),
+        });
+    }
+    if arrays.lock_players.len() != arrays.lock_slot_groups.len() {
+        return Err(ConvertError::LockArrayMismatch {
+            players: arrays.lock_players.len(),
+            slot_groups: arrays.lock_slot_groups.len(),
         });
     }
     Ok(GreedyConfig {
-        num_lineups,
-        seed,
-        noise,
-        attempts_per_lineup,
-        chunks,
-        profiles: profiles
+        num_lineups: arrays.num_lineups,
+        seed: arrays.seed,
+        noise: arrays.noise,
+        attempts_per_lineup: arrays.attempts_per_lineup,
+        chunks: arrays.chunks,
+        profiles: arrays
+            .profiles
             .chunks(4)
             .map(|p| JitterProfile {
                 ceiling: (p[0], p[1]),
                 leverage: (p[2], p[3]),
             })
             .collect(),
+        locks: arrays
+            .lock_players
+            .iter()
+            .zip(arrays.lock_slot_groups)
+            .map(|(&player, &slot_group)| (player, slot_group as usize))
+            .collect(),
+        exposure_limits: arrays.exposure_limits.to_vec(),
     })
 }
 
@@ -416,30 +454,66 @@ mod tests {
         );
     }
 
+    fn config<'a>(profiles: &'a [f64]) -> ConfigArrays<'a> {
+        ConfigArrays {
+            num_lineups: 10,
+            seed: 42,
+            noise: 0.25,
+            attempts_per_lineup: 3,
+            chunks: 8,
+            profiles,
+            lock_players: &[],
+            lock_slot_groups: &[],
+            exposure_limits: &[],
+        }
+    }
+
     #[test]
     fn config_round_trips_through_a_flat_profile_matrix() {
-        let config = config_from_arrays(
-            10,
-            42,
-            0.25,
-            3,
-            8,
-            &[0.1, 0.7, 0.6, 1.6, 0.3, 1.5, 0.2, 1.2],
-        )
-        .unwrap();
-        assert_eq!(config.num_lineups, 10);
-        assert_eq!(config.seed, 42);
+        let profiles = [0.1, 0.7, 0.6, 1.6, 0.3, 1.5, 0.2, 1.2];
+        let built = config_from_arrays(config(&profiles)).unwrap();
+        assert_eq!(built.num_lineups, 10);
+        assert_eq!(built.seed, 42);
         assert_eq!(
-            config.profiles,
+            built.profiles,
             vec![JitterProfile::CONTRARIAN, JitterProfile::STANDARD]
         );
+        assert!(built.locks.is_empty());
+        assert!(built.exposure_limits.is_empty());
     }
 
     #[test]
     fn a_ragged_profile_matrix_is_rejected() {
         assert_eq!(
-            config_from_arrays(1, 0, 0.0, 1, 1, &[0.1, 0.7, 0.6]),
+            config_from_arrays(config(&[0.1, 0.7, 0.6])),
             Err(ConvertError::RaggedProfileMatrix { len: 3 })
+        );
+    }
+
+    #[test]
+    fn locks_round_trip_as_player_and_slot_group_pairs() {
+        let profiles = [0.1, 0.7, 0.6, 1.6];
+        let mut a = config(&profiles);
+        a.lock_players = &[3, 7];
+        a.lock_slot_groups = &[0, 2];
+        a.exposure_limits = &[5, 5, 5, u32::MAX];
+        let built = config_from_arrays(a).unwrap();
+        assert_eq!(built.locks, vec![(3, 0), (7, 2)]);
+        assert_eq!(built.exposure_limits, vec![5, 5, 5, u32::MAX]);
+    }
+
+    #[test]
+    fn unequal_lock_arrays_are_rejected() {
+        let profiles = [0.1, 0.7, 0.6, 1.6];
+        let mut a = config(&profiles);
+        a.lock_players = &[3, 7];
+        a.lock_slot_groups = &[0];
+        assert_eq!(
+            config_from_arrays(a),
+            Err(ConvertError::LockArrayMismatch {
+                players: 2,
+                slot_groups: 1
+            })
         );
     }
 
@@ -482,6 +556,10 @@ mod tests {
                 salary: 3,
             },
             ConvertError::ConflictPairMismatch { left: 2, right: 1 },
+            ConvertError::LockArrayMismatch {
+                players: 2,
+                slot_groups: 1,
+            },
             ConvertError::GroupArrayMismatch {
                 key_columns: 1,
                 max_counts: 2,

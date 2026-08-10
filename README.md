@@ -39,6 +39,8 @@ its mean.
 - Optional pairwise conflicts — "no hitters against my starting pitcher", expressed as a join
   between two player keys. Off unless you ask: it is a strategy, not a contest rule, and a
   contrarian deliberately wants that correlation.
+- Locks (players forced into every lineup, matched to slots properly rather than greedily) and
+  per-player exposure caps across the portfolio.
 - Lazy-greedy submodular selection with a CVaR-upside objective, ownership/leverage discounting,
   and a diversity penalty.
 - Sport presets (`mlb_dfs_solver.presets`) shipped as data, not hardcoded branches.

@@ -12,6 +12,7 @@ nothing else. Two runs on machines with different core counts agree exactly.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import TYPE_CHECKING
@@ -23,9 +24,9 @@ from mlb_dfs_solver.pool import PlayerPool
 from mlb_dfs_solver.spec import RosterSpec
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
 
-__all__ = ["CONTRARIAN", "STANDARD", "JitterProfile", "build_lineups"]
+__all__ = ["CONTRARIAN", "STANDARD", "JitterProfile", "assign_locks", "build_lineups"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,6 +71,18 @@ _DEFAULT_PROFILES: tuple[JitterProfile, ...] = (CONTRARIAN, STANDARD)
 # empty arrays. Read-only so a caller cannot make it non-empty for everyone.
 _NO_PAIRS = np.empty((2, 0), dtype=np.uint32)
 _NO_PAIRS.flags.writeable = False
+
+# Shared "no exposure caps" marker. An empty column is how the kernel is told to
+# skip the merge-time bookkeeping entirely.
+_NO_LIMITS = np.empty(0, dtype=np.uint32)
+_NO_LIMITS.flags.writeable = False
+
+# Likewise for locks. Building two empty arrays per call is measurable against a
+# build of a handful of lineups, and there is nothing to distinguish them.
+_NO_LOCK_PLAYERS = np.empty(0, dtype=np.uint32)
+_NO_LOCK_PLAYERS.flags.writeable = False
+_NO_LOCK_SLOTS = np.empty(0, dtype=np.uint64)
+_NO_LOCK_SLOTS.flags.writeable = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -189,6 +202,152 @@ def _encode_slots(spec: RosterSpec) -> _SlotArrays:
     return arrays
 
 
+def assign_locks(
+    pool: PlayerPool,
+    spec: RosterSpec,
+    locks: Sequence[int] | Mapping[int, str | None],
+) -> list[tuple[int, int]]:
+    """Work out which slot group will hold each locked player.
+
+    Returns `(player, slot_group)` pairs. Exposed because the answer is worth
+    inspecting: if a set of locks is rejected, seeing the partial assignment is
+    usually enough to know which one is the problem.
+
+    This is a bipartite matching, not a greedy walk, and the difference matters.
+    Two locks both eligible at flex, only one of whom can also play tight end:
+    take flex for the wrong one and the other has nowhere to go, even though a
+    legal arrangement exists. Assigning greedily would reject rosters that are
+    perfectly fine. Kuhn's algorithm finds a complete assignment whenever one
+    exists, and at roster-sized inputs its cost is not worth measuring.
+
+    The assignment depends only on eligibility and slot counts, never on salary
+    or projection, so it is settled once here rather than being re-derived on
+    every one of thousands of attempts.
+
+    Args:
+        pool: Players, used for their position eligibility.
+        spec: Specification whose slots the locks are matched against.
+        locks: Pool indices, or a mapping from pool index to a slot name that
+            pins that lock to one slot group. A `None` value means "any slot the
+            player is eligible for", the same as passing a bare sequence.
+
+    Returns:
+        One `(player, slot_group)` pair per lock, ordered by player so the result
+        is stable however the locks were given.
+
+    Raises:
+        ValueError: If a lock is out of range, names an unknown slot, is not
+            eligible for the slot it was pinned to, is listed twice, or if no
+            complete assignment exists.
+    """
+    pinned: dict[int, str | None] = (
+        dict(locks) if isinstance(locks, dict) else {int(p): None for p in locks}
+    )
+    if isinstance(locks, dict) or not locks:
+        pass
+    elif len(pinned) != len(locks):
+        msg = "the same player is locked more than once"
+        raise ValueError(msg)
+
+    slot_index = {slot.name: i for i, slot in enumerate(spec.slots)}
+    # Which slot groups each lock could go in, in slot order.
+    options: list[list[int]] = []
+    players = list(pinned)
+    for player in players:
+        if not 0 <= player < len(pool):
+            msg = f"locked player index {player} is outside a pool of {len(pool)} players"
+            raise ValueError(msg)
+        mask = int(pool.positions[player])
+        name = pinned[player]
+        if name is None:
+            groups = [i for i, slot in enumerate(spec.slots) if mask & spec.mask_for(slot.eligible)]
+            if not groups:
+                msg = f"locked player {player} is not eligible for any slot in this specification"
+                raise ValueError(msg)
+        else:
+            if name not in slot_index:
+                known = ", ".join(slot_index)
+                msg = f"locked player {player} names slot {name!r}; this specification has: {known}"
+                raise ValueError(msg)
+            group = slot_index[name]
+            if not mask & spec.mask_for(spec.slots[group].eligible):
+                msg = f"locked player {player} is not eligible for slot {name!r}"
+                raise ValueError(msg)
+            groups = [group]
+        options.append(groups)
+
+    # Kuhn's algorithm, with each slot group holding up to `count` locks. Trying
+    # to displace an existing occupant is what separates this from greedy.
+    seats: list[list[int]] = [[] for _ in spec.slots]
+
+    def place(lock: int, visited: set[int]) -> bool:
+        for group in options[lock]:
+            if group in visited:
+                continue
+            visited.add(group)
+            if len(seats[group]) < spec.slots[group].count:
+                seats[group].append(lock)
+                return True
+            for seat, occupant in enumerate(seats[group]):
+                seats[group][seat] = lock
+                if place(occupant, visited):
+                    return True
+                seats[group][seat] = occupant
+        return False
+
+    for lock in range(len(players)):
+        if not place(lock, set()):
+            player = players[lock]
+            msg = (
+                f"locked player {player} cannot be placed: every slot they are "
+                f"eligible for is already taken by another lock. Locks so far: "
+                f"{sorted((players[o], g) for g, occ in enumerate(seats) for o in occ)}"
+            )
+            raise ValueError(msg)
+
+    return sorted(
+        (players[lock], group) for group, occupants in enumerate(seats) for lock in occupants
+    )
+
+
+def _exposure_limits(
+    pool: PlayerPool,
+    max_exposure: float | Mapping[int, float],
+    num_lineups: int,
+    locked: set[int],
+) -> np.ndarray:
+    """Turn exposure fractions into per-player lineup counts.
+
+    The count is taken against the *requested* portfolio size, not the running
+    total. Deriving it from what has been accepted so far would put the very
+    first lineup over any cap below 100%.
+    """
+    uncapped = np.iinfo(np.uint32).max
+    limits = np.full(len(pool), uncapped, dtype=np.uint32)
+    items = (
+        [(i, float(max_exposure)) for i in range(len(pool))]
+        if isinstance(max_exposure, (int, float))
+        else [(int(k), float(v)) for k, v in max_exposure.items()]
+    )
+    for player, fraction in items:
+        if not 0.0 <= fraction <= 1.0:
+            msg = f"max_exposure for player {player} is {fraction}; it must be a fraction in [0, 1]"
+            raise ValueError(msg)
+        if not 0 <= player < len(pool):
+            msg = f"max_exposure names player index {player} but the pool has {len(pool)} players"
+            raise ValueError(msg)
+        if player in locked and fraction < 1.0:
+            # Both were asked for and they cannot both hold. Saying so beats
+            # silently honouring one, which would look like the other was ignored.
+            msg = (
+                f"player {player} is locked into every lineup but capped at "
+                f"{fraction:.0%} exposure; those cannot both be true"
+            )
+            raise ValueError(msg)
+        limits[player] = math.floor(fraction * num_lineups)
+    return limits
+
+
 def build_lineups(
     pool: PlayerPool,
     spec: RosterSpec,
@@ -200,6 +359,8 @@ def build_lineups(
     chunks: int = 64,
     profiles: Sequence[JitterProfile] | None = None,
     conflict_pairs: Sequence[tuple[int, int]] | np.ndarray | None = None,
+    locks: Sequence[int] | Mapping[int, str | None] | None = None,
+    max_exposure: float | Mapping[int, float] | None = None,
 ) -> np.ndarray:
     """Build a pool of distinct, valid lineups.
 
@@ -225,6 +386,24 @@ def build_lineups(
             about *this* pool — the same specification against tomorrow's slate
             would silently forbid two unrelated players. Order within a pair does
             not matter; the relation is symmetrized.
+        locks: Players forced into every lineup, as pool indices — or as a
+            mapping from pool index to a slot name, to pin a lock to one slot
+            (`{7: "CPT"}`). Which slot holds each lock is otherwise worked out by
+            [`assign_locks`][mlb_dfs_solver.greedy.assign_locks].
+
+            A lock is honoured or the lineup is not produced; it is never quietly
+            dropped. If a lock cannot coexist with the cap, a group cap, or
+            another lock, the result is empty rather than a lineup without it.
+        max_exposure: Ceiling on the fraction of returned lineups that may
+            contain a player. A number caps every player; a mapping caps only the
+            players it names.
+
+            Applied when the parallel chunks are merged, which is the only place
+            that sees the whole portfolio and still reproduces exactly. A cap too
+            tight to satisfy yields fewer lineups, never a portfolio that breaks
+            it. Note the fraction is of `num_lineups` as requested, so asking for
+            200 lineups at 30% allows 60 appearances even if only 100 lineups
+            come back.
 
     Returns:
         An `(n, roster_size)` array of indices into `pool`, where columns follow
@@ -280,6 +459,13 @@ def build_lineups(
             raise ValueError(msg)
         pairs = np.concatenate([pairs, extra.T.astype(np.uint32)], axis=1)
 
+    assigned = assign_locks(pool, spec, locks) if locks else []
+    limits = (
+        _exposure_limits(pool, max_exposure, num_lineups, {p for p, _ in assigned})
+        if max_exposure is not None
+        else _NO_LIMITS
+    )
+
     encoded = _encode(spec, pool, selected, pairs)
 
     return _native.build_lineups(
@@ -306,4 +492,7 @@ def build_lineups(
         int(attempts_per_lineup),
         int(chunks),
         encoded.profiles,
+        np.asarray([p for p, _ in assigned], dtype=np.uint32) if assigned else _NO_LOCK_PLAYERS,
+        np.asarray([g for _, g in assigned], dtype=np.uint64) if assigned else _NO_LOCK_SLOTS,
+        limits,
     )
