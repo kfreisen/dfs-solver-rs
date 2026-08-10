@@ -23,7 +23,38 @@ use rand_xoshiro::Xoshiro256PlusPlus;
 use rayon::prelude::*;
 use std::collections::HashSet;
 
-use crate::roster::{GroupTally, PositionMask, RosterSpec, SpecError};
+use crate::roster::{GroupTally, PositionMask, RosterSpec, SlotGroup, SpecError};
+
+/// What every player costs in every slot group.
+///
+/// The fill loop takes one row per slot group and then indexes it by player, so
+/// a showdown captain costs its multiplied salary at exactly the cost of the
+/// plain lookup it replaced.
+///
+/// Two shapes, because a roster without multipliers is the common one and would
+/// otherwise pay for a table whose rows are all identical: `Uniform` hands back
+/// the pool's own salaries. `row` is called once per slot group per lineup —
+/// roughly ten times against thousands of player comparisons — so the branch is
+/// free at the scale that matters.
+#[derive(Debug, Clone, Copy)]
+enum SlotSalaries<'a> {
+    /// No slot scales salary; every row is the base column.
+    Uniform(&'a [i64]),
+    /// Flat `(n_slot_groups, n_players)` row-major table.
+    PerSlot { table: &'a [i64], n_players: usize },
+}
+
+impl<'a> SlotSalaries<'a> {
+    fn row(&self, slot_group: usize) -> &'a [i64] {
+        match *self {
+            Self::Uniform(salaries) => salaries,
+            Self::PerSlot { table, n_players } => {
+                let start = slot_group * n_players;
+                &table[start..start + n_players]
+            }
+        }
+    }
+}
 
 /// The players available to build from. Columns rather than a struct-of-arrays
 /// because this arrives from NumPy and is read in tight loops.
@@ -140,7 +171,10 @@ impl Default for GreedyConfig {
 }
 
 /// Why construction could not run.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// Not `Eq`, because [`SpecError`] is not: it carries the offending multiplier so
+/// that a `NaN` can be named in the message.
+#[derive(Debug, Clone, PartialEq)]
 pub enum BuildError {
     /// The roster specification is itself invalid.
     Spec(SpecError),
@@ -228,6 +262,25 @@ pub fn build_lineups(
         return Ok(Vec::new());
     }
 
+    // What each player costs in each slot group. Built once, outside the parallel
+    // region: it depends only on the pool and the spec, so building it per chunk
+    // would multiply the work by the chunk count for an identical answer. Not
+    // built at all when no slot scales salary, which is every roster outside a
+    // showdown.
+    let salary_table = if spec.has_salary_multipliers() {
+        spec.slot_salary_table(pool.salaries)
+    } else {
+        Vec::new()
+    };
+    let slot_salaries = if salary_table.is_empty() {
+        SlotSalaries::Uniform(pool.salaries)
+    } else {
+        SlotSalaries::PerSlot {
+            table: &salary_table,
+            n_players: pool.len(),
+        }
+    };
+
     // Cheapest way to finish, per slot group.
     //
     // Without a reservation the fill spends its whole budget on whichever slots it
@@ -246,10 +299,16 @@ pub fn build_lineups(
     // groups is counted in both. That keeps this a lower bound, which is the safe
     // direction — it can only admit a pick that later proves infeasible, never
     // reject a feasible one.
+    //
+    // Built from slot-scaled salaries, not raw ones: a captain slot reserving the
+    // unmultiplied cheapest player under-reserves by half its cost, and the
+    // symptom is the last slot being unaffordable on every attempt.
     let cheapest: Vec<Vec<i64>> = eligible
         .iter()
-        .map(|group| {
-            let mut salaries: Vec<i64> = group.iter().map(|&i| pool.salaries[i as usize]).collect();
+        .enumerate()
+        .map(|(group_idx, group)| {
+            let row = slot_salaries.row(group_idx);
+            let mut salaries: Vec<i64> = group.iter().map(|&i| row[i as usize]).collect();
             salaries.sort_unstable();
             let mut prefix = Vec::with_capacity(salaries.len() + 1);
             prefix.push(0);
@@ -277,7 +336,14 @@ pub fn build_lineups(
     let chunk_results: Vec<Vec<Lineup>> = (0..config.chunks)
         .into_par_iter()
         .map(|chunk| {
-            let mut builder = Builder::new(pool, spec, &eligible, &cheapest, &suffix_cost);
+            let mut builder = Builder::new(
+                pool,
+                spec,
+                &eligible,
+                &cheapest,
+                &suffix_cost,
+                slot_salaries,
+            );
             let mut rng = Xoshiro256PlusPlus::seed_from_u64(
                 config.seed ^ (chunk as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15),
             );
@@ -328,8 +394,18 @@ struct Builder<'a> {
     cheapest: &'a [Vec<i64>],
     /// `suffix_cost[j]` is the cheapest possible total for slot groups after `j`.
     suffix_cost: &'a [i64],
+    /// What every player costs in every slot group.
+    slot_salaries: SlotSalaries<'a>,
     objective: Vec<f64>,
     used: Vec<bool>,
+    /// How many rostered players each player conflicts with. A candidate is
+    /// blocked while this is non-zero.
+    ///
+    /// Counted rather than flagged because repair swaps a player back out, and a
+    /// flag could not tell "unblocked" from "blocked by someone else". Maintained
+    /// per *pick* over the conflict adjacency, so the check a candidate pays is a
+    /// single load.
+    blocked: Vec<u16>,
     candidates: Vec<u32>,
     lineup: Vec<u32>,
     slot_of: Vec<usize>,
@@ -343,6 +419,7 @@ impl<'a> Builder<'a> {
         eligible: &'a [Vec<u32>],
         cheapest: &'a [Vec<i64>],
         suffix_cost: &'a [i64],
+        slot_salaries: SlotSalaries<'a>,
     ) -> Self {
         let n = pool.len();
         let roster_size = spec.roster_size();
@@ -352,8 +429,12 @@ impl<'a> Builder<'a> {
             eligible,
             cheapest,
             suffix_cost,
+            slot_salaries,
             objective: vec![0.0; n],
             used: vec![false; n],
+            // Not allocated at all without conflicts, so the spec that does not
+            // use them does not pay for the memory either.
+            blocked: vec![0; if spec.conflicts.is_empty() { 0 } else { n }],
             candidates: Vec::with_capacity(n),
             lineup: Vec::with_capacity(roster_size),
             slot_of: Vec::with_capacity(roster_size),
@@ -393,10 +474,15 @@ impl<'a> Builder<'a> {
     /// Fill every slot greedily, then repair salary if needed.
     fn fill(&mut self) -> Option<Lineup> {
         self.used.fill(false);
+        self.blocked.fill(0);
         self.lineup.clear();
         self.slot_of.clear();
         self.tally.reset();
         let mut salary: i64 = 0;
+        // Hoisted so the inner loop's conflict test short-circuits on a value the
+        // branch predictor sees as constant, and never touches `blocked` at all
+        // for the overwhelmingly common spec that declares no conflicts.
+        let has_conflicts = !self.spec.conflicts.is_empty();
 
         for (group_idx, slot) in self.spec.slots.iter().enumerate() {
             self.candidates.clear();
@@ -416,6 +502,9 @@ impl<'a> Builder<'a> {
                     .then(a.cmp(&b))
             });
 
+            // One row for the whole slot group: what each player costs *here*.
+            let salaries = self.slot_salaries.row(group_idx);
+
             let mut picked = 0;
             for &player in &self.candidates {
                 if picked == slot.count {
@@ -428,15 +517,23 @@ impl<'a> Builder<'a> {
                 let prefix = &self.cheapest[group_idx];
                 let remaining =
                     prefix[still_needed.min(prefix.len() - 1)] + self.suffix_cost[group_idx + 1];
-                if salary + self.pool.salaries[p] + remaining > self.spec.salary_cap {
+                if salary + salaries[p] + remaining > self.spec.salary_cap {
                     continue;
                 }
                 if self.tally.would_exceed(p, group_idx) {
                     continue;
                 }
+                if has_conflicts && self.blocked[p] != 0 {
+                    continue;
+                }
                 self.used[p] = true;
                 self.tally.add(p, group_idx);
-                salary += self.pool.salaries[p];
+                if has_conflicts {
+                    for &other in self.spec.conflicts.neighbors(p) {
+                        self.blocked[other as usize] += 1;
+                    }
+                }
+                salary += salaries[p];
                 self.lineup.push(player);
                 self.slot_of.push(group_idx);
                 picked += 1;
@@ -472,24 +569,36 @@ impl<'a> Builder<'a> {
             return true;
         }
 
+        let has_conflicts = !self.spec.conflicts.is_empty();
+
+        // Cost is per-slot now, so the cheapest player is the cheapest *as
+        // rostered*: a captain at 1.5x may be dearer than a flex player on a
+        // larger base salary, and swapping the wrong one out has less headroom.
         let mut order: Vec<usize> = (0..self.lineup.len()).collect();
-        let salaries = self.pool.salaries;
+        let slot_salaries = self.slot_salaries;
         let lineup = &self.lineup;
-        order.sort_unstable_by(|&a, &b| {
-            salaries[lineup[a] as usize]
-                .cmp(&salaries[lineup[b] as usize])
-                .then(a.cmp(&b))
-        });
+        let slot_of = &self.slot_of;
+        let cost = |i: usize| slot_salaries.row(slot_of[i])[lineup[i] as usize];
+        order.sort_unstable_by(|&a, &b| cost(a).cmp(&cost(b)).then(a.cmp(&b)));
 
         for slot_index in order {
             let outgoing = self.lineup[slot_index] as usize;
             let group_idx = self.slot_of[slot_index];
-            let outgoing_salary = self.pool.salaries[outgoing];
+            let salaries = self.slot_salaries.row(group_idx);
+            let outgoing_salary = salaries[outgoing];
 
             // Take the outgoing player out of the tally first, so a replacement
             // from the same team is not rejected by the slot it is about to free.
+            // The conflict marks it laid down come off for the same reason: a
+            // candidate the outgoing player was blocking is a legitimate
+            // replacement for them.
             self.tally.remove(outgoing, group_idx);
             self.used[outgoing] = false;
+            if has_conflicts {
+                for &other in self.spec.conflicts.neighbors(outgoing) {
+                    self.blocked[other as usize] -= 1;
+                }
+            }
 
             let mut swapped = None;
             for &candidate in &self.eligible[group_idx] {
@@ -497,7 +606,7 @@ impl<'a> Builder<'a> {
                 if self.used[c] {
                     continue;
                 }
-                let gain = self.pool.salaries[c] - outgoing_salary;
+                let gain = salaries[c] - outgoing_salary;
                 if gain < needed {
                     continue;
                 }
@@ -506,6 +615,9 @@ impl<'a> Builder<'a> {
                     continue;
                 }
                 if self.tally.would_exceed(c, group_idx) {
+                    continue;
+                }
+                if has_conflicts && self.blocked[c] != 0 {
                     continue;
                 }
                 swapped = Some((candidate, new_total));
@@ -517,6 +629,11 @@ impl<'a> Builder<'a> {
                     let c = candidate as usize;
                     self.used[c] = true;
                     self.tally.add(c, group_idx);
+                    if has_conflicts {
+                        for &other in self.spec.conflicts.neighbors(c) {
+                            self.blocked[other as usize] += 1;
+                        }
+                    }
                     self.lineup[slot_index] = candidate;
                     *salary = new_total;
                     return true;
@@ -525,6 +642,11 @@ impl<'a> Builder<'a> {
                     // Restore and try the next slot.
                     self.used[outgoing] = true;
                     self.tally.add(outgoing, group_idx);
+                    if has_conflicts {
+                        for &other in self.spec.conflicts.neighbors(outgoing) {
+                            self.blocked[other as usize] += 1;
+                        }
+                    }
                 }
             }
         }
@@ -541,21 +663,50 @@ fn sample_range(rng: &mut Xoshiro256PlusPlus, (low, high): (f64, f64)) -> f64 {
     }
 }
 
-/// Total salary of a lineup. Exposed because callers routinely want it and
-/// recomputing it in Python defeats the point of building here.
-pub fn lineup_salary(pool: &PlayerPool<'_>, lineup: &[u32]) -> i64 {
-    lineup.iter().map(|&i| pool.salaries[i as usize]).sum()
+/// Walk a lineup alongside the slot group each of its entries occupies.
+///
+/// A lineup is stored in slot order with the group boundaries implicit, so
+/// anything that needs per-slot multipliers has to rebuild that pairing. Doing it
+/// in one place keeps the two scoring functions below from disagreeing about it.
+fn with_slot_groups<'a>(
+    spec: &'a RosterSpec,
+    lineup: &'a [u32],
+) -> impl Iterator<Item = (usize, &'a SlotGroup)> + 'a {
+    spec.slots
+        .iter()
+        .flat_map(|slot| std::iter::repeat_n(slot, slot.count))
+        .zip(lineup)
+        .map(|(slot, &player)| (player as usize, slot))
 }
 
-/// Total projection of a lineup.
-pub fn lineup_projection(pool: &PlayerPool<'_>, lineup: &[u32]) -> f64 {
-    lineup.iter().map(|&i| pool.projections[i as usize]).sum()
+/// Total salary of a lineup, with each slot's multiplier applied.
+///
+/// Exposed because callers routinely want it and recomputing it in Python defeats
+/// the point of building here.
+pub fn lineup_salary(pool: &PlayerPool<'_>, spec: &RosterSpec, lineup: &[u32]) -> i64 {
+    with_slot_groups(spec, lineup)
+        .map(|(player, slot)| {
+            crate::roster::scaled_salary(pool.salaries[player], slot.salary_multiplier)
+        })
+        .sum()
+}
+
+/// Total projection of a lineup, with each slot's multiplier applied.
+///
+/// This is where a score multiplier finally shows up. It cannot change which
+/// player construction puts in a captain slot — every candidate for that slot is
+/// scaled alike — but it very much changes what the finished lineup is worth, and
+/// a showdown lineup scored without it is wrong by half a player.
+pub fn lineup_projection(pool: &PlayerPool<'_>, spec: &RosterSpec, lineup: &[u32]) -> f64 {
+    with_slot_groups(spec, lineup)
+        .map(|(player, slot)| pool.projections[player] * slot.score_multiplier)
+        .sum()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::roster::{GroupConstraint, SlotGroup};
+    use crate::roster::{ConflictGraph, GroupConstraint, SlotGroup};
 
     const P: PositionMask = 1 << 0;
     const C: PositionMask = 1 << 1;
@@ -565,18 +716,9 @@ mod tests {
     fn tiny_spec(team_ids: Vec<i32>, cap: i64, floor: i64) -> RosterSpec {
         RosterSpec {
             slots: vec![
-                SlotGroup {
-                    eligible: C,
-                    count: 1,
-                },
-                SlotGroup {
-                    eligible: OF,
-                    count: 2,
-                },
-                SlotGroup {
-                    eligible: P,
-                    count: 1,
-                },
+                SlotGroup::new(C, 1),
+                SlotGroup::new(OF, 2),
+                SlotGroup::new(P, 1),
             ],
             salary_cap: cap,
             salary_floor: floor,
@@ -586,6 +728,7 @@ mod tests {
                 slots: 0b111,
             }],
             key_columns: vec![team_ids],
+            conflicts: ConflictGraph::none(),
         }
     }
 
@@ -656,9 +799,21 @@ mod tests {
             sorted.dedup();
             assert_eq!(before, sorted.len(), "a player appears twice: {lineup:?}");
 
-            let salary = lineup_salary(pool, lineup);
+            let salary = lineup_salary(pool, spec, lineup);
             assert!(salary <= spec.salary_cap, "over cap: {salary}");
             assert!(salary >= spec.salary_floor, "under floor: {salary}");
+
+            // No two rostered players may conflict. Checked from the graph rather
+            // than from the builder's `blocked` counters, so a bug in the counter
+            // maintenance cannot certify itself.
+            for &a in lineup.iter() {
+                for &b in lineup.iter() {
+                    assert!(
+                        !spec.conflicts.neighbors(a as usize).contains(&b),
+                        "conflicting players {a} and {b} share a lineup"
+                    );
+                }
+            }
 
             // Positional eligibility, slot by slot.
             let mut cursor = 0;
@@ -829,6 +984,244 @@ mod tests {
             .is_empty());
     }
 
+    // --- Slot multipliers -------------------------------------------------
+
+    /// A showdown-shaped roster: one multiplied slot plus a run of plain ones.
+    fn showdown_spec(cap: i64, score: f64, salary: f64) -> RosterSpec {
+        RosterSpec {
+            slots: vec![
+                SlotGroup::multiplied(C | OF | P, 1, score, salary),
+                SlotGroup::new(C | OF | P, 3),
+            ],
+            salary_cap: cap,
+            salary_floor: 0,
+            groups: Vec::new(),
+            key_columns: vec![vec![0; 16]],
+            conflicts: ConflictGraph::none(),
+        }
+    }
+
+    #[test]
+    fn a_captain_slot_charges_its_multiplied_salary() {
+        let pool = make_pool();
+        let spec = showdown_spec(30_000, 1.5, 1.5);
+        let lineups = build_lineups(&pool.view(), &spec, &config(30)).unwrap();
+        assert!(!lineups.is_empty());
+        assert_all_valid(&lineups, &pool.view(), &spec);
+
+        // The validator above uses lineup_salary, which is the same code the cap
+        // check uses. Recompute it independently so this is a real check.
+        for lineup in &lineups {
+            let captain = lineup[0] as usize;
+            let expected: i64 = (pool.salaries[captain] as f64 * 1.5).round() as i64
+                + lineup[1..]
+                    .iter()
+                    .map(|&i| pool.salaries[i as usize])
+                    .sum::<i64>();
+            assert_eq!(lineup_salary(&pool.view(), &spec, lineup), expected);
+            assert!(expected <= 30_000);
+        }
+    }
+
+    #[test]
+    fn a_multiplied_salary_actually_binds_the_cap() {
+        let pool = make_pool();
+        // A cap that the same roster clears comfortably at 1.0x and cannot at
+        // 1.5x, so this fails if the multiplier is dropped anywhere in the fill.
+        let plain =
+            build_lineups(&pool.view(), &showdown_spec(13_000, 1.0, 1.0), &config(30)).unwrap();
+        assert!(!plain.is_empty(), "the plain cap should be satisfiable");
+
+        let spec = showdown_spec(13_000, 1.5, 1.5);
+        let multiplied = build_lineups(&pool.view(), &spec, &config(30)).unwrap();
+        assert_all_valid(&multiplied, &pool.view(), &spec);
+        let cheapest_plain = plain
+            .iter()
+            .map(|l| lineup_salary(&pool.view(), &showdown_spec(13_000, 1.0, 1.0), l))
+            .min()
+            .unwrap();
+        assert!(
+            multiplied.len() < plain.len() || cheapest_plain > 13_000,
+            "a 1.5x captain must make the cap harder, not easier"
+        );
+    }
+
+    #[test]
+    fn a_score_multiplier_does_not_change_which_players_are_picked() {
+        // Documented behaviour, and worth pinning: every candidate for a slot is
+        // scaled by the same factor, so the ordering cannot move. If this ever
+        // fails, the multiplier has leaked into the sort and determinism claims
+        // about seeds no longer hold across spec edits.
+        let pool = make_pool();
+        let plain = build_lineups(&pool.view(), &showdown_spec(30_000, 1.0, 1.0), &config(30));
+        let scaled = build_lineups(&pool.view(), &showdown_spec(30_000, 1.5, 1.0), &config(30));
+        assert_eq!(plain.unwrap(), scaled.unwrap());
+    }
+
+    #[test]
+    fn a_score_multiplier_changes_what_the_lineup_is_worth() {
+        let pool = make_pool();
+        let spec = showdown_spec(30_000, 1.5, 1.0);
+        let lineups = build_lineups(&pool.view(), &spec, &config(5)).unwrap();
+        let lineup = &lineups[0];
+        let captain = lineup[0] as usize;
+        let expected = pool.projections[captain] * 1.5
+            + lineup[1..]
+                .iter()
+                .map(|&i| pool.projections[i as usize])
+                .sum::<f64>();
+        assert!((lineup_projection(&pool.view(), &spec, lineup) - expected).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_multiplied_slot_reserves_its_multiplied_cost() {
+        // The reservation is what stops the fill spending everything before it
+        // reaches the last slot. Put the captain *last* so the earlier slots have
+        // to leave room for 1.5x, which raw-salary prefix sums would not do.
+        let pool = make_pool();
+        let spec = RosterSpec {
+            slots: vec![
+                SlotGroup::new(C | OF | P, 3),
+                SlotGroup::multiplied(C | OF | P, 1, 1.5, 1.5),
+            ],
+            salary_cap: 16_000,
+            salary_floor: 0,
+            groups: Vec::new(),
+            key_columns: vec![vec![0; 16]],
+            conflicts: ConflictGraph::none(),
+        };
+        let lineups = build_lineups(&pool.view(), &spec, &config(30)).unwrap();
+        assert!(!lineups.is_empty(), "the reservation is over-tight");
+        assert_all_valid(&lineups, &pool.view(), &spec);
+    }
+
+    #[test]
+    fn repair_prices_the_swap_in_the_slot_it_happens_in() {
+        // A floor forces repair, and the captain slot makes the cheapest player
+        // as-rostered differ from the cheapest by base salary.
+        let pool = make_pool();
+        let spec = RosterSpec {
+            slots: vec![
+                SlotGroup::multiplied(C | OF | P, 1, 1.5, 1.5),
+                SlotGroup::new(C | OF | P, 3),
+            ],
+            salary_cap: 25_000,
+            salary_floor: 23_000,
+            groups: Vec::new(),
+            key_columns: vec![vec![0; 16]],
+            conflicts: ConflictGraph::none(),
+        };
+        let lineups = build_lineups(&pool.view(), &spec, &config(30)).unwrap();
+        assert!(!lineups.is_empty(), "repair found nothing to fix");
+        assert_all_valid(&lineups, &pool.view(), &spec);
+    }
+
+    // --- Conflicts --------------------------------------------------------
+
+    /// Each catcher conflicts with exactly one pitcher, the way a hitter opposes
+    /// exactly one starter. A complete bipartite graph would be unsatisfiable
+    /// rather than constraining, which tests nothing about enforcement.
+    fn opposing_pairs() -> Vec<(u32, u32)> {
+        (0..4u32).map(|c| (c, 12 + c)).collect()
+    }
+
+    #[test]
+    fn conflicting_players_never_share_a_lineup() {
+        let pool = make_pool();
+        let unconstrained = tiny_spec(team_ids(16), 30_000, 0);
+        let mut spec = tiny_spec(team_ids(16), 30_000, 0);
+        spec.conflicts = ConflictGraph::from_pairs(opposing_pairs(), 16);
+
+        // The rule has to be doing work, or this passes for the wrong reason.
+        let before = build_lineups(&pool.view(), &unconstrained, &config(50)).unwrap();
+        assert!(
+            before.iter().any(|l| opposing_pairs()
+                .iter()
+                .any(|&(a, b)| l.contains(&a) && l.contains(&b))),
+            "the unconstrained build never produced a conflicting pair, so \
+             forbidding them proves nothing"
+        );
+
+        let lineups = build_lineups(&pool.view(), &spec, &config(50)).unwrap();
+        assert!(!lineups.is_empty());
+        assert_all_valid(&lineups, &pool.view(), &spec);
+    }
+
+    #[test]
+    fn conflicts_are_enforced_whichever_side_is_picked_first() {
+        // The pair is given one way round only. The catcher slot fills before the
+        // pitcher slot, so a directed relation would let the pitcher through.
+        let pool = make_pool();
+        let mut spec = tiny_spec(team_ids(16), 30_000, 0);
+        spec.conflicts = ConflictGraph::from_pairs([(12u32, 0u32)], 16);
+        let lineups = build_lineups(&pool.view(), &spec, &config(50)).unwrap();
+        assert!(!lineups.is_empty());
+        for lineup in &lineups {
+            assert!(
+                !(lineup.contains(&0) && lineup.contains(&12)),
+                "conflict ignored in one direction: {lineup:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unsatisfiable_conflict_graph_returns_nothing() {
+        // Every pitcher conflicts with every catcher and the roster needs one of
+        // each, so no lineup exists. This must come back empty rather than loop.
+        let pool = make_pool();
+        let mut spec = tiny_spec(team_ids(16), 30_000, 0);
+        let pairs: Vec<(u32, u32)> = (0..4u32)
+            .flat_map(|c| (12..16u32).map(move |p| (c, p)))
+            .chain((0..4u32).flat_map(|c| (4..12u32).map(move |o| (c, o))))
+            .collect();
+        spec.conflicts = ConflictGraph::from_pairs(pairs, 16);
+        assert!(build_lineups(&pool.view(), &spec, &config(10))
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn conflicts_survive_salary_repair() {
+        // Repair swaps players in and out after the fill, with its own blocked
+        // bookkeeping. A floor tight enough to force repair is the only way to
+        // reach that code, and a missed decrement there produces lineups the fill
+        // loop would never have built.
+        let pool = make_pool();
+        let mut spec = tiny_spec(team_ids(16), 22_000, 20_000);
+        spec.conflicts = ConflictGraph::from_pairs(opposing_pairs(), 16);
+        let lineups = build_lineups(&pool.view(), &spec, &config(40)).unwrap();
+        assert!(!lineups.is_empty(), "repair recovered nothing to check");
+        assert_all_valid(&lineups, &pool.view(), &spec);
+    }
+
+    #[test]
+    fn declaring_no_conflicts_changes_nothing() {
+        // The opt-in has to be genuinely inert: a spec that names no conflicts
+        // must produce byte-identical output to one built before conflicts
+        // existed, or every committed benchmark and seed became a lie.
+        let pool = make_pool();
+        let spec = tiny_spec(team_ids(16), 30_000, 0);
+        let mut empty = tiny_spec(team_ids(16), 30_000, 0);
+        empty.conflicts = ConflictGraph::from_pairs([], 16);
+        assert_eq!(
+            build_lineups(&pool.view(), &spec, &config(40)).unwrap(),
+            build_lineups(&pool.view(), &empty, &config(40)).unwrap()
+        );
+    }
+
+    #[test]
+    fn a_conflict_graph_for_the_wrong_pool_is_rejected() {
+        let pool = make_pool();
+        let mut spec = tiny_spec(team_ids(16), 30_000, 0);
+        spec.conflicts = ConflictGraph::from_pairs([(0, 1)], 8);
+        assert!(matches!(
+            build_lineups(&pool.view(), &spec, &config(10)),
+            Err(BuildError::Spec(
+                SpecError::ConflictGraphLengthMismatch { .. }
+            ))
+        ));
+    }
+
     #[test]
     fn mismatched_pool_columns_are_rejected() {
         let mut pool = make_pool();
@@ -901,15 +1294,16 @@ mod tests {
     fn salary_and_projection_helpers_agree_with_the_pool() {
         let pool = make_pool();
         let view = pool.view();
+        let spec = tiny_spec(team_ids(16), 30_000, 0);
         let lineup = vec![0u32, 4, 5, 12];
         assert_eq!(
-            lineup_salary(&view, &lineup),
+            lineup_salary(&view, &spec, &lineup),
             lineup
                 .iter()
                 .map(|&i| pool.salaries[i as usize])
                 .sum::<i64>()
         );
         let expected: f64 = lineup.iter().map(|&i| pool.projections[i as usize]).sum();
-        assert!((lineup_projection(&view, &lineup) - expected).abs() < 1e-12);
+        assert!((lineup_projection(&view, &spec, &lineup) - expected).abs() < 1e-12);
     }
 }

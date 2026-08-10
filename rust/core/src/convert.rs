@@ -10,13 +10,21 @@
 //! without an interpreter.
 
 use crate::greedy::{GreedyConfig, JitterProfile};
-use crate::roster::{GroupConstraint, RosterSpec, SlotGroup};
+use crate::roster::{ConflictGraph, GroupConstraint, RosterSpec, SlotGroup};
 
 /// A malformed set of flat arrays.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConvertError {
     /// The per-slot arrays disagree on length.
     SlotArrayMismatch { eligible: usize, counts: usize },
+    /// The per-slot multiplier arrays disagree with the slot count.
+    SlotMultiplierMismatch {
+        slots: usize,
+        score: usize,
+        salary: usize,
+    },
+    /// The conflict pair arrays disagree on length.
+    ConflictPairMismatch { left: usize, right: usize },
     /// The per-group arrays disagree on length.
     GroupArrayMismatch {
         key_columns: usize,
@@ -39,6 +47,20 @@ impl std::fmt::Display for ConvertError {
             Self::SlotArrayMismatch { eligible, counts } => write!(
                 f,
                 "slot_eligible has {eligible} entries but slot_counts has {counts}"
+            ),
+            Self::SlotMultiplierMismatch {
+                slots,
+                score,
+                salary,
+            } => write!(
+                f,
+                "there are {slots} slot groups but {score} score multipliers and \
+                 {salary} salary multipliers"
+            ),
+            Self::ConflictPairMismatch { left, right } => write!(
+                f,
+                "conflict_left has {left} entries but conflict_right has {right}; \
+                 they are parallel arrays of pairs"
             ),
             Self::GroupArrayMismatch {
                 key_columns,
@@ -80,6 +102,10 @@ pub struct SpecArrays<'a> {
     pub slot_eligible: &'a [u32],
     /// Number of slots per slot group.
     pub slot_counts: &'a [u64],
+    /// Score multiplier per slot group; all ones outside a showdown.
+    pub slot_score_multipliers: &'a [f64],
+    /// Salary multiplier per slot group; all ones outside a showdown.
+    pub slot_salary_multipliers: &'a [f64],
     /// Maximum total salary.
     pub salary_cap: i64,
     /// Minimum total salary; 0 disables.
@@ -92,6 +118,11 @@ pub struct SpecArrays<'a> {
     pub group_slot_masks: &'a [u64],
     /// Flattened `(n_columns, n_players)` key matrix.
     pub key_columns: &'a [i32],
+    /// Left side of each forbidden pair, as a player index. Empty unless the
+    /// caller opted in to conflicts.
+    pub conflict_left: &'a [u32],
+    /// Right side of each forbidden pair, parallel to `conflict_left`.
+    pub conflict_right: &'a [u32],
 }
 
 /// Rebuild a [`RosterSpec`] from flat arrays.
@@ -103,6 +134,22 @@ pub fn spec_from_arrays(
         return Err(ConvertError::SlotArrayMismatch {
             eligible: arrays.slot_eligible.len(),
             counts: arrays.slot_counts.len(),
+        });
+    }
+    let n_slots = arrays.slot_eligible.len();
+    if arrays.slot_score_multipliers.len() != n_slots
+        || arrays.slot_salary_multipliers.len() != n_slots
+    {
+        return Err(ConvertError::SlotMultiplierMismatch {
+            slots: n_slots,
+            score: arrays.slot_score_multipliers.len(),
+            salary: arrays.slot_salary_multipliers.len(),
+        });
+    }
+    if arrays.conflict_left.len() != arrays.conflict_right.len() {
+        return Err(ConvertError::ConflictPairMismatch {
+            left: arrays.conflict_left.len(),
+            right: arrays.conflict_right.len(),
         });
     }
     let n_groups = arrays.group_max_counts.len();
@@ -126,13 +173,12 @@ pub fn spec_from_arrays(
     }
 
     Ok(RosterSpec {
-        slots: arrays
-            .slot_eligible
-            .iter()
-            .zip(arrays.slot_counts)
-            .map(|(&eligible, &count)| SlotGroup {
-                eligible,
-                count: count as usize,
+        slots: (0..n_slots)
+            .map(|i| SlotGroup {
+                eligible: arrays.slot_eligible[i],
+                count: arrays.slot_counts[i] as usize,
+                score_multiplier: arrays.slot_score_multipliers[i],
+                salary_multiplier: arrays.slot_salary_multipliers[i],
             })
             .collect(),
         salary_cap: arrays.salary_cap,
@@ -149,6 +195,17 @@ pub fn spec_from_arrays(
             .chunks(n_players)
             .map(<[i32]>::to_vec)
             .collect(),
+        // Symmetrized here rather than at the caller: the boundary is the last
+        // place that knows the pair list is finished, and the builder's blocked
+        // counters are only correct for a symmetric relation.
+        conflicts: ConflictGraph::from_pairs(
+            arrays
+                .conflict_left
+                .iter()
+                .copied()
+                .zip(arrays.conflict_right.iter().copied()),
+            n_players,
+        ),
     })
 }
 
@@ -209,12 +266,16 @@ mod tests {
         SpecArrays {
             slot_eligible: &[0b010, 0b100, 0b001],
             slot_counts: &[1, 2, 1],
+            slot_score_multipliers: &[1.0, 1.0, 1.0],
+            slot_salary_multipliers: &[1.0, 1.0, 1.0],
             salary_cap: 50_000,
             salary_floor: 49_000,
             group_key_columns: &[0, 0],
             group_max_counts: &[6, 5],
             group_slot_masks: &[0b111, 0b011],
             key_columns,
+            conflict_left: &[],
+            conflict_right: &[],
         }
     }
 
@@ -232,11 +293,73 @@ mod tests {
     }
 
     #[test]
+    fn multipliers_round_trip_onto_their_slot_groups() {
+        let keys = [0, 1, 0, 1, 2, 2];
+        let mut a = arrays(&keys);
+        a.slot_score_multipliers = &[1.5, 1.0, 1.0];
+        a.slot_salary_multipliers = &[1.5, 1.0, 2.0];
+        let spec = spec_from_arrays(a, 6).unwrap();
+        assert_eq!(spec.slots[0].score_multiplier, 1.5);
+        assert_eq!(spec.slots[0].salary_multiplier, 1.5);
+        assert_eq!(spec.slots[1].score_multiplier, 1.0);
+        assert_eq!(spec.slots[2].salary_multiplier, 2.0);
+    }
+
+    #[test]
+    fn a_multiplier_array_of_the_wrong_length_is_rejected() {
+        let keys = [0];
+        let mut a = arrays(&keys);
+        a.slot_score_multipliers = &[1.0, 1.0];
+        assert_eq!(
+            spec_from_arrays(a, 1),
+            Err(ConvertError::SlotMultiplierMismatch {
+                slots: 3,
+                score: 2,
+                salary: 3
+            })
+        );
+    }
+
+    #[test]
+    fn conflict_pairs_arrive_symmetrized() {
+        let keys = [0, 1, 0, 1, 2, 2];
+        let mut a = arrays(&keys);
+        a.conflict_left = &[0, 4];
+        a.conflict_right = &[3, 5];
+        let spec = spec_from_arrays(a, 6).unwrap();
+        assert_eq!(spec.conflicts.neighbors(0), &[3]);
+        assert_eq!(spec.conflicts.neighbors(3), &[0]);
+        assert_eq!(spec.conflicts.neighbors(5), &[4]);
+        assert!(spec.conflicts.neighbors(1).is_empty());
+    }
+
+    #[test]
+    fn no_conflict_pairs_leaves_an_empty_graph() {
+        let keys = [0, 1, 0, 1, 2, 2];
+        let spec = spec_from_arrays(arrays(&keys), 6).unwrap();
+        assert!(spec.conflicts.is_empty());
+    }
+
+    #[test]
+    fn unequal_conflict_arrays_are_rejected() {
+        let keys = [0];
+        let mut a = arrays(&keys);
+        a.conflict_left = &[0, 1];
+        a.conflict_right = &[1];
+        assert_eq!(
+            spec_from_arrays(a, 1),
+            Err(ConvertError::ConflictPairMismatch { left: 2, right: 1 })
+        );
+    }
+
+    #[test]
     fn two_key_columns_split_at_the_pool_boundary() {
         let keys = [0, 0, 1, 5, 6, 7];
         let mut a = arrays(&keys);
         a.slot_eligible = &[1];
         a.slot_counts = &[1];
+        a.slot_score_multipliers = &[1.0];
+        a.slot_salary_multipliers = &[1.0];
         a.group_key_columns = &[0, 1];
         let spec = spec_from_arrays(a, 3).unwrap();
         assert_eq!(spec.key_columns, vec![vec![0, 0, 1], vec![5, 6, 7]]);
@@ -248,6 +371,8 @@ mod tests {
         let mut a = arrays(&keys);
         a.slot_eligible = &[1, 2];
         a.slot_counts = &[1];
+        a.slot_score_multipliers = &[1.0, 1.0];
+        a.slot_salary_multipliers = &[1.0, 1.0];
         assert_eq!(
             spec_from_arrays(a, 1),
             Err(ConvertError::SlotArrayMismatch {
@@ -351,6 +476,12 @@ mod tests {
                 eligible: 1,
                 counts: 2,
             },
+            ConvertError::SlotMultiplierMismatch {
+                slots: 3,
+                score: 2,
+                salary: 3,
+            },
+            ConvertError::ConflictPairMismatch { left: 2, right: 1 },
             ConvertError::GroupArrayMismatch {
                 key_columns: 1,
                 max_counts: 2,

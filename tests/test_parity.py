@@ -124,8 +124,8 @@ def test_both_let_the_objective_drive_selection(mlb_pool: PlayerPool, mlb_spec: 
     scrambled = build_lineups(mlb_pool, mlb_spec, num_lineups=100, seed=13, noise=50.0)
     assert len(signal) > 0
     assert len(scrambled) > 0
-    assert float(mlb_pool.projection_of(signal).mean()) > float(
-        mlb_pool.projection_of(scrambled).mean()
+    assert float(mlb_pool.projection_of(signal, mlb_spec).mean()) > float(
+        mlb_pool.projection_of(scrambled, mlb_spec).mean()
     )
 
     ref_signal = build_lineups_reference(mlb_pool, mlb_spec, num_lineups=30, seed=13, noise=0.0)
@@ -151,7 +151,7 @@ def test_both_respond_to_a_tightening_cap(
     reference = build_lineups_reference(mlb_pool, spec, num_lineups=40, seed=17)
 
     if len(kernel):
-        assert int(mlb_pool.salary_of(kernel).max()) <= cap
+        assert int(mlb_pool.salary_of(kernel, spec).max()) <= cap
     for lineup in reference:
         assert sum(int(mlb_pool.salaries[i]) for i in lineup) <= cap
 
@@ -184,3 +184,127 @@ def test_both_honour_a_salary_floor_that_forces_repair(
         sum(int(mlb_pool.salaries[i]) for i in lineup) >= mlb_spec.salary_floor
         for lineup in reference
     )
+
+
+# --- Slot multipliers and conflicts --------------------------------------
+
+
+def showdown_spec() -> RosterSpec:
+    """A single-game shape over the tiny fixture's positions."""
+    from mlb_dfs_solver.spec import Slot
+
+    return RosterSpec(
+        positions=("P", "C", "OF"),
+        slots=(
+            Slot("CPT", ("P", "C", "OF"), score_multiplier=1.5, salary_multiplier=1.5),
+            Slot("FLEX", ("P", "C", "OF"), count=3),
+        ),
+        salary_cap=30_000,
+        salary_floor=0,
+    )
+
+
+def test_both_price_a_captain_slot_the_same_way(tiny_pool: PlayerPool) -> None:
+    """A multiplier the two implementations disagreed about would be invisible.
+
+    The kernel would call a lineup legal and the oracle would call it over the
+    cap, or worse, both would agree on a number neither the operator nor the
+    reader recognises. So the check is against the independent validator.
+    """
+    spec = showdown_spec()
+    kernel = build_lineups(tiny_pool, spec, num_lineups=60, seed=21)
+    reference = build_lineups_reference(tiny_pool, spec, num_lineups=60, seed=21)
+    assert len(kernel) > 0
+    assert reference
+    assert validity_report(kernel, tiny_pool, spec) == ""
+    for lineup in reference:
+        assert is_valid(lineup, tiny_pool, spec), lineup
+
+
+def test_both_build_comparably_many_showdown_lineups(tiny_pool: PlayerPool) -> None:
+    # Different RNGs mean different lineups, but a multiplier applied in one
+    # implementation and not the other would show up as one of them finding far
+    # fewer lineups under the same cap.
+    spec = showdown_spec()
+    kernel = build_lineups(tiny_pool, spec, num_lineups=80, seed=22)
+    reference = build_lineups_reference(tiny_pool, spec, num_lineups=80, seed=22)
+    assert 0.5 <= len(kernel) / max(len(reference), 1) <= 2.0
+
+
+def opposed_pool(spec: RosterSpec) -> PlayerPool:
+    """A pool carrying both a team and an opponent, four teams paired off."""
+    records: list[dict[str, object]] = []
+    for position in ("P", "C", "OF"):
+        for k in range(8):
+            team = k % 4
+            records.append(
+                {
+                    "name": f"{position}{k}",
+                    "positions": (position,),
+                    "salary": 3000 + k * 600,
+                    "projection": 5.0 + k * 1.5,
+                    "stddev": 2.0 + (k % 3),
+                    "team": f"T{team}",
+                    "opponent": f"T{team ^ 1}",
+                }
+            )
+    return PlayerPool.from_records(records, spec, key_fields=["team", "opponent"])
+
+
+def test_both_enforce_a_conflict_rule(tiny_spec: RosterSpec) -> None:
+    from dataclasses import replace
+
+    from mlb_dfs_solver.spec import ConflictRule
+
+    spec = replace(
+        tiny_spec,
+        conflicts=(ConflictRule(left_key="opponent", right_key="team", left_positions=("P",)),),
+    )
+    pool = opposed_pool(spec)
+    kernel = build_lineups(pool, spec, num_lineups=60, seed=23)
+    reference = build_lineups_reference(pool, spec, num_lineups=60, seed=23)
+    assert len(kernel) > 0
+    assert reference
+    assert validity_report(kernel, pool, spec) == ""
+    for lineup in reference:
+        assert is_valid(lineup, pool, spec), lineup
+
+
+def test_both_enforce_explicit_conflict_pairs(tiny_pool: PlayerPool, tiny_spec: RosterSpec) -> None:
+    pairs = [(0, 8), (1, 9)]
+    kernel = build_lineups(tiny_pool, tiny_spec, num_lineups=60, seed=24, conflict_pairs=pairs)
+    reference = build_lineups_reference(
+        tiny_pool, tiny_spec, num_lineups=60, seed=24, extra_conflict_pairs=pairs
+    )
+    assert len(kernel) > 0
+    assert reference
+    assert validity_report(kernel, tiny_pool, tiny_spec, extra_conflict_pairs=pairs) == ""
+    for lineup in reference:
+        assert is_valid(lineup, tiny_pool, tiny_spec, extra_conflict_pairs=pairs), lineup
+
+
+def test_both_enforce_conflicts_through_salary_repair(tiny_spec: RosterSpec) -> None:
+    """Repair is where conflict bookkeeping is easiest to get wrong.
+
+    It removes a player, searches for a replacement, and must restore the marks
+    exactly on failure. A leak produces lineups the fill loop would never build,
+    and only a floor tight enough to force repair reaches that code.
+    """
+    from dataclasses import replace
+
+    from mlb_dfs_solver.spec import ConflictRule
+
+    spec = replace(
+        tiny_spec,
+        salary_cap=22_000,
+        salary_floor=20_000,
+        conflicts=(ConflictRule(left_key="opponent", right_key="team", left_positions=("P",)),),
+    )
+    pool = opposed_pool(spec)
+    kernel = build_lineups(pool, spec, num_lineups=60, seed=25)
+    reference = build_lineups_reference(pool, spec, num_lineups=60, seed=25)
+    assert len(kernel) > 0, "repair recovered nothing to check"
+    assert reference
+    assert validity_report(kernel, pool, spec) == ""
+    for lineup in reference:
+        assert is_valid(lineup, pool, spec), lineup

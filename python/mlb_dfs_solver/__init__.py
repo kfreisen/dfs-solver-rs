@@ -23,11 +23,12 @@ from mlb_dfs_solver._native import __version__ as _native_version
 from mlb_dfs_solver._native import active_isa
 from mlb_dfs_solver.greedy import CONTRARIAN, STANDARD, JitterProfile, build_lineups
 from mlb_dfs_solver.pool import PlayerPool
-from mlb_dfs_solver.spec import GroupConstraint, RosterSpec, Slot
+from mlb_dfs_solver.spec import ConflictRule, GroupConstraint, RosterSpec, Slot
 
 __all__ = [
     "CONTRARIAN",
     "STANDARD",
+    "ConflictRule",
     "GroupConstraint",
     "JitterProfile",
     "PlayerPool",

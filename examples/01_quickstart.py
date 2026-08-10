@@ -132,8 +132,8 @@ def _(DK_MLB_CLASSIC, build_lineups, pool):
 
 @app.cell
 def _(DK_MLB_CLASSIC, lineups, mo, pool):
-    salaries = pool.salary_of(lineups)
-    projections = pool.projection_of(lineups)
+    salaries = pool.salary_of(lineups, DK_MLB_CLASSIC)
+    projections = pool.projection_of(lineups, DK_MLB_CLASSIC)
 
     mo.md(
         f"""

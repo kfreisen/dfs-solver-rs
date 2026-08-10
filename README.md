@@ -14,6 +14,11 @@ Two different problems, usually conflated:
 1. **Build one valid roster.** Pick players under a salary cap, filling positional slots, subject
    to group limits ("at most 6 from one team"). This is an integer program, and an ILP solver
    answers it exactly.
+
+   One rule shape is still missing: *minimums*. "Players from at least two different games" is a
+   real DraftKings requirement on most classic contests, and a group cap only bounds from above,
+   so a lineup this builder considers legal can still be rejected at entry. Check before you
+   submit.
 2. **Build a *portfolio* of rosters.** Pick 150 lineups that collectively do well across
    simulated outcomes. Optimality per lineup is close to worthless here — 150 optimal lineups are
    150 nearly identical lineups. What matters is diverse coverage of the outcome space.
@@ -29,6 +34,11 @@ its mean.
 - Randomized greedy construction with salary-repair backtracking, over an arbitrary roster
   specification — slots, position eligibility as bitmasks, salary cap and floor, and generic
   group constraints.
+- Per-slot score and salary multipliers, so showdown / single-game formats (a captain worth
+  1.5× and costing 1.5×) are the same code path as a classic roster.
+- Optional pairwise conflicts — "no hitters against my starting pitcher", expressed as a join
+  between two player keys. Off unless you ask: it is a strategy, not a contest rule, and a
+  contrarian deliberately wants that correlation.
 - Lazy-greedy submodular selection with a CVaR-upside objective, ownership/leverage discounting,
   and a diversity penalty.
 - Sport presets (`mlb_dfs_solver.presets`) shipped as data, not hardcoded branches.

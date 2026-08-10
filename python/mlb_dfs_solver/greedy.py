@@ -13,6 +13,7 @@ nothing else. Two runs on machines with different core counts agree exactly.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -64,6 +65,12 @@ high-ceiling core.
 
 _DEFAULT_PROFILES: tuple[JitterProfile, ...] = (CONTRARIAN, STANDARD)
 
+# Shared empty pair list. Allocating a fresh one per build is not free at the
+# scale a three-lineup build runs at, and there is nothing to distinguish two
+# empty arrays. Read-only so a caller cannot make it non-empty for everyone.
+_NO_PAIRS = np.empty((2, 0), dtype=np.uint32)
+_NO_PAIRS.flags.writeable = False
+
 
 @dataclass(frozen=True, slots=True)
 class _Encoded:
@@ -71,19 +78,33 @@ class _Encoded:
 
     slot_eligible: np.ndarray
     slot_counts: np.ndarray
+    slot_score_multipliers: np.ndarray
+    slot_salary_multipliers: np.ndarray
     group_key_columns: np.ndarray
     group_max_counts: np.ndarray
     group_slot_masks: np.ndarray
     key_columns: np.ndarray
+    conflict_left: np.ndarray
+    conflict_right: np.ndarray
     profiles: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.float64))
 
 
-def _encode(spec: RosterSpec, pool: PlayerPool, profiles: Sequence[JitterProfile]) -> _Encoded:
+def _encode(
+    spec: RosterSpec,
+    pool: PlayerPool,
+    profiles: Sequence[JitterProfile],
+    conflict_pairs: np.ndarray,
+) -> _Encoded:
     """Flatten the specification and profiles for the kernel.
 
     Done once per call. The key matrix is `(n_columns, n_players)` row-major, and
     group constraints index into it by column, so a single `team` column is shared
     by both the total cap and the hitter cap rather than being sent twice.
+
+    Conflicts cross as an explicit pair list rather than as rules. Resolving a key
+    join needs the pool, which the kernel does not have in a form it could join
+    on, and the resolution is `O(n + pairs)` done once against thousands of
+    lineups. The kernel symmetrizes what it receives, so pair order is irrelevant.
     """
     key_order: list[str] = list(spec.group_keys)
     for key in key_order:
@@ -100,23 +121,72 @@ def _encode(spec: RosterSpec, pool: PlayerPool, profiles: Sequence[JitterProfile
         if key_order
         else np.empty(0, dtype=np.int32)
     )
-    column_of = {key: i for i, key in enumerate(key_order)}
+    slots = _encode_slots(spec)
 
     return _Encoded(
+        slot_eligible=slots.slot_eligible,
+        slot_counts=slots.slot_counts,
+        slot_score_multipliers=slots.slot_score_multipliers,
+        slot_salary_multipliers=slots.slot_salary_multipliers,
+        group_key_columns=slots.group_key_columns,
+        group_max_counts=slots.group_max_counts,
+        group_slot_masks=slots.group_slot_masks,
+        key_columns=key_columns,
+        conflict_left=np.ascontiguousarray(conflict_pairs[0], dtype=np.uint32),
+        conflict_right=np.ascontiguousarray(conflict_pairs[1], dtype=np.uint32),
+        profiles=np.asarray(
+            [[*p.ceiling, *p.leverage] for p in profiles], dtype=np.float64
+        ).ravel(),
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _SlotArrays:
+    """The part of the encoding that depends on the specification alone."""
+
+    slot_eligible: np.ndarray
+    slot_counts: np.ndarray
+    slot_score_multipliers: np.ndarray
+    slot_salary_multipliers: np.ndarray
+    group_key_columns: np.ndarray
+    group_max_counts: np.ndarray
+    group_slot_masks: np.ndarray
+
+
+@lru_cache(maxsize=32)
+def _encode_slots(spec: RosterSpec) -> _SlotArrays:
+    """Encode the slot and group arrays, memoized on the specification.
+
+    Seven small arrays built from Python lists costs several microseconds, which
+    is invisible against a thousand-lineup build and a double-digit percentage of
+    a three-lineup one. A `RosterSpec` is frozen and hashable, and callers reuse
+    one across every build, so caching is both safe and effective.
+
+    The arrays are marked read-only before being handed out. They are shared
+    between callers, and a mutation would silently change someone else's
+    constraints.
+    """
+    column_of = {key: i for i, key in enumerate(spec.group_keys)}
+    arrays = _SlotArrays(
         slot_eligible=np.asarray(
             [spec.mask_for(slot.eligible) for slot in spec.slots], dtype=np.uint32
         ),
         slot_counts=np.asarray([slot.count for slot in spec.slots], dtype=np.uint64),
+        slot_score_multipliers=np.asarray(
+            [slot.score_multiplier for slot in spec.slots], dtype=np.float64
+        ),
+        slot_salary_multipliers=np.asarray(
+            [slot.salary_multiplier for slot in spec.slots], dtype=np.float64
+        ),
         group_key_columns=np.asarray([column_of[g.key] for g in spec.groups], dtype=np.uint64),
         group_max_counts=np.asarray([g.max_count for g in spec.groups], dtype=np.uint32),
         group_slot_masks=np.asarray(
             [spec.slot_mask_for(g.slots) for g in spec.groups], dtype=np.uint64
         ),
-        key_columns=key_columns,
-        profiles=np.asarray(
-            [[*p.ceiling, *p.leverage] for p in profiles], dtype=np.float64
-        ).ravel(),
     )
+    for field_name in _SlotArrays.__slots__:
+        getattr(arrays, field_name).flags.writeable = False
+    return arrays
 
 
 def build_lineups(
@@ -129,6 +199,7 @@ def build_lineups(
     attempts_per_lineup: int = 3,
     chunks: int = 64,
     profiles: Sequence[JitterProfile] | None = None,
+    conflict_pairs: Sequence[tuple[int, int]] | np.ndarray | None = None,
 ) -> np.ndarray:
     """Build a pool of distinct, valid lineups.
 
@@ -148,6 +219,12 @@ def build_lineups(
             the output.
         profiles: Jitter profiles cycled across attempts. Defaults to
             `(CONTRARIAN, STANDARD)`.
+        conflict_pairs: Extra `(i, j)` pool-index pairs forbidden from sharing a
+            lineup, on top of anything `spec.conflicts` resolves to. Index pairs
+            live here rather than on the specification because they are a fact
+            about *this* pool — the same specification against tomorrow's slate
+            would silently forbid two unrelated players. Order within a pair does
+            not matter; the relation is symmetrized.
 
     Returns:
         An `(n, roster_size)` array of indices into `pool`, where columns follow
@@ -168,7 +245,7 @@ def build_lineups(
 
         pool = PlayerPool.from_records(records, DK_MLB_CLASSIC)
         lineups = build_lineups(pool, DK_MLB_CLASSIC, num_lineups=500, seed=1)
-        print(lineups.shape, pool.salary_of(lineups).max())
+        print(lineups.shape, pool.salary_of(lineups, DK_MLB_CLASSIC).max())
         ```
     """
     if num_lineups < 0:
@@ -189,7 +266,21 @@ def build_lineups(
         msg = "profiles is empty; supply at least one, or pass None for the default"
         raise ValueError(msg)
 
-    encoded = _encode(spec, pool, selected)
+    pairs = _NO_PAIRS if not spec.conflicts else pool.conflict_pairs(spec)
+    if conflict_pairs is not None:
+        extra = np.asarray(conflict_pairs, dtype=np.int64).reshape(-1, 2)
+        if extra.size and (extra < 0).any():
+            msg = "conflict_pairs must be non-negative pool indices"
+            raise ValueError(msg)
+        if extra.size and int(extra.max()) >= len(pool):
+            msg = (
+                f"conflict_pairs names player index {int(extra.max())} but the pool "
+                f"has {len(pool)} players"
+            )
+            raise ValueError(msg)
+        pairs = np.concatenate([pairs, extra.T.astype(np.uint32)], axis=1)
+
+    encoded = _encode(spec, pool, selected, pairs)
 
     return _native.build_lineups(
         np.ascontiguousarray(pool.projections, dtype=np.float64),
@@ -199,12 +290,16 @@ def build_lineups(
         np.ascontiguousarray(pool.positions, dtype=np.uint32),
         encoded.slot_eligible,
         encoded.slot_counts,
+        encoded.slot_score_multipliers,
+        encoded.slot_salary_multipliers,
         int(spec.salary_cap),
         int(spec.salary_floor),
         encoded.group_key_columns,
         encoded.group_max_counts,
         encoded.group_slot_masks,
         encoded.key_columns,
+        encoded.conflict_left,
+        encoded.conflict_right,
         int(num_lineups),
         int(seed),
         float(noise),

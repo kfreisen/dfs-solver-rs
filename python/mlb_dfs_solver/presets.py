@@ -7,13 +7,18 @@ branch anywhere in this package that asks which sport it is looking at.
 Operators change these rules, sometimes mid-season. Treat a preset as a starting
 point that was correct when written, and check it against the contest you are
 actually entering.
+
+No preset declares a [`ConflictRule`][mlb_dfs_solver.spec.ConflictRule]. Rules here
+are the ones the operator enforces; "no hitters against my pitcher" is a strategy,
+and a preset that quietly imposed it would be wrong for anyone deliberately
+correlating that way. Add them yourself with `dataclasses.replace`.
 """
 
 from __future__ import annotations
 
 from mlb_dfs_solver.spec import GroupConstraint, RosterSpec, Slot
 
-__all__ = ["DK_MLB_CLASSIC", "DK_NFL_CLASSIC", "PRESETS"]
+__all__ = ["DK_MLB_CLASSIC", "DK_NFL_CLASSIC", "DK_NFL_SHOWDOWN", "PRESETS"]
 
 
 # Slots are listed scarce-first, which is the order construction fills them in.
@@ -71,8 +76,37 @@ DK_NFL_CLASSIC = RosterSpec(
 )
 
 
+# A single-game contest, which is the format that makes slot multipliers load
+# bearing rather than decorative: the captain scores 1.5x and costs 1.5x, so the
+# same player is a different proposition depending on where they are rostered.
+#
+# Every position fills every slot here, which means slot *order* is doing all the
+# work — the captain is listed first so the fill spends its premium on the best
+# available player rather than on whoever is left.
+DK_NFL_SHOWDOWN = RosterSpec(
+    positions=("QB", "RB", "WR", "TE", "K", "DST"),
+    slots=(
+        Slot(
+            "CPT",
+            ("QB", "RB", "WR", "TE", "K", "DST"),
+            score_multiplier=1.5,
+            salary_multiplier=1.5,
+        ),
+        Slot("FLEX", ("QB", "RB", "WR", "TE", "K", "DST"), count=5),
+    ),
+    salary_cap=50_000,
+    salary_floor=0,
+    # DraftKings also requires players from both teams. That is a *minimum*, which
+    # this specification cannot yet express — a group cap only bounds from above.
+    # Stated here rather than omitted silently: a lineup this builder considers
+    # legal may still be rejected at entry.
+    groups=(),
+)
+
+
 PRESETS: dict[str, RosterSpec] = {
     "dk_mlb_classic": DK_MLB_CLASSIC,
     "dk_nfl_classic": DK_NFL_CLASSIC,
+    "dk_nfl_showdown": DK_NFL_SHOWDOWN,
 }
 """Every preset, by name."""

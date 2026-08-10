@@ -4,6 +4,11 @@ Stored column-wise as NumPy arrays because that is the form the kernel borrows
 directly. Building a pool from a list of records is a convenience
 ([`PlayerPool.from_records`][mlb_dfs_solver.pool.PlayerPool.from_records]); the arrays
 are the real interface.
+
+The pool holds no reference to a specification. That is why the methods reporting
+what a lineup is worth take one: a player's salary and score depend on the slot
+they were rostered in once showdown multipliers exist, and the pool alone cannot
+know that.
 """
 
 from __future__ import annotations
@@ -95,6 +100,12 @@ class PlayerPool:
         and are mapped to dense integers, since string keys cannot cross into the
         kernel. A missing or `None` key becomes `-1`, meaning uncapped.
 
+        **All key columns share one id space.** Encoding each column separately
+        would be tidier and is wrong: a conflict rule joins one column to another,
+        and `"BOS"` has to mean the same integer in `opponent` as it does in
+        `team` or the join matches unrelated players. Group caps are unaffected
+        either way, since they only ever compare within a single column.
+
         Args:
             records: One mapping per player.
             spec: Specification whose positions encode the masks and whose group
@@ -116,12 +127,17 @@ class PlayerPool:
                 msg = f"record {i} is missing required field(s): {missing}"
                 raise KeyError(msg)
 
-        wanted = tuple(key_fields) if key_fields is not None else spec.group_keys
+        wanted = (
+            tuple(key_fields)
+            if key_fields is not None
+            else tuple(dict.fromkeys(spec.group_keys + spec.conflict_keys))
+        )
         keys: dict[str, np.ndarray] = {}
+        # One dictionary across every column, so the same value encodes to the
+        # same id wherever it appears. Ids are assigned in first-seen order, which
+        # keeps the encoding deterministic for a given record order.
+        seen: dict[Any, int] = {}
         for key in wanted:
-            # Dense integer ids, assigned in first-seen order so the encoding is
-            # deterministic for a given record order.
-            seen: dict[Any, int] = {}
             encoded = np.empty(len(records), dtype=np.int32)
             for i, record in enumerate(records):
                 raw = record.get(key)
@@ -143,13 +159,100 @@ class PlayerPool:
             names=tuple(str(r.get("name", f"player-{i}")) for i, r in enumerate(records)),
         )
 
-    def salary_of(self, lineups: np.ndarray) -> np.ndarray:
-        """Total salary of each lineup in an `(n, roster_size)` index array."""
-        return np.asarray(self.salaries[lineups].sum(axis=1))
+    def conflict_pairs(self, spec: RosterSpec) -> np.ndarray:
+        """Resolve the specification's conflict rules against this pool.
 
-    def projection_of(self, lineups: np.ndarray) -> np.ndarray:
-        """Total projection of each lineup in an `(n, roster_size)` index array."""
-        return np.asarray(self.projections[lineups].sum(axis=1))
+        Each rule joins one player's `left_key` to another's `right_key`, so this
+        buckets the pool by the right-hand key and then walks the left-hand side
+        looking each value up — `O(n + pairs)` rather than the `O(n^2)` the rule
+        reads like.
+
+        Negative key values match nothing, consistent with group constraints,
+        where a negative key means "belongs to no group".
+
+        Args:
+            spec: Specification whose `conflicts` are resolved. Its `positions`
+                encode the eligibility filters.
+
+        Returns:
+            A `(2, n_pairs)` `uint32` array of player indices. Empty when the
+            specification declares no conflicts, which is the default.
+
+        Raises:
+            KeyError: If a rule reads a key the pool does not carry.
+        """
+        if not spec.conflicts:
+            return np.empty((2, 0), dtype=np.uint32)
+
+        for key in spec.conflict_keys:
+            if key not in self.keys:
+                available = ", ".join(sorted(self.keys)) or "none"
+                msg = (
+                    f"a conflict rule reads {key!r} but the pool has no such key "
+                    f"column (available: {available}). Pass it in the records, or "
+                    f"name it in from_records(key_fields=...)."
+                )
+                raise KeyError(msg)
+
+        left: list[int] = []
+        right: list[int] = []
+        for rule in spec.conflicts:
+            left_mask = spec.mask_for(rule.left_positions) if rule.left_positions else None
+            right_mask = spec.mask_for(rule.right_positions) if rule.right_positions else None
+            left_values = self.keys[rule.left_key]
+            right_values = self.keys[rule.right_key]
+
+            by_value: dict[int, list[int]] = {}
+            for j in range(len(self)):
+                value = int(right_values[j])
+                if value < 0:
+                    continue
+                if right_mask is not None and not int(self.positions[j]) & right_mask:
+                    continue
+                by_value.setdefault(value, []).append(j)
+
+            for i in range(len(self)):
+                value = int(left_values[i])
+                if value < 0:
+                    continue
+                if left_mask is not None and not int(self.positions[i]) & left_mask:
+                    continue
+                for j in by_value.get(value, ()):
+                    if i == j:
+                        continue
+                    left.append(i)
+                    right.append(j)
+
+        return np.asarray([left, right], dtype=np.uint32).reshape(2, -1)
+
+    def salary_of(self, lineups: np.ndarray, spec: RosterSpec) -> np.ndarray:
+        """Total salary of each lineup in an `(n, roster_size)` index array.
+
+        `spec` is required rather than optional because a showdown captain costs
+        1.5x and a total computed without it is not merely approximate, it is a
+        different number from the one the kernel checked against the cap.
+        """
+        base = self.salaries[lineups]
+        multipliers = np.asarray(spec.salary_multipliers(), dtype=np.float64)
+        if not (multipliers != 1.0).any():
+            return np.asarray(base.sum(axis=1))
+        # Half away from zero, matching `scaled_salary` and the kernel. Columns
+        # whose multiplier is exactly 1.0 keep their integer value rather than
+        # making a float round trip, so a large salary cannot drift by an ulp.
+        product = base * multipliers
+        rounded = np.sign(product) * np.floor(np.abs(product) + 0.5)
+        scaled = np.where(multipliers == 1.0, base, rounded).astype(np.int64)
+        return np.asarray(scaled.sum(axis=1))
+
+    def projection_of(self, lineups: np.ndarray, spec: RosterSpec) -> np.ndarray:
+        """Total projection of each lineup in an `(n, roster_size)` index array.
+
+        This is where a score multiplier finally shows up. It cannot change which
+        player construction puts in a captain slot — every candidate for that slot
+        is scaled alike — but it very much changes what the lineup is worth.
+        """
+        weighted = self.projections[lineups] * np.asarray(spec.score_multipliers())
+        return np.asarray(weighted.sum(axis=1))
 
     def names_of(self, lineup: np.ndarray) -> list[str]:
         """Player names for one lineup, in slot order."""
