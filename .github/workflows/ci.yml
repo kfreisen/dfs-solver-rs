@@ -1,0 +1,137 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        # Oldest supported and newest stable: the floor catches use of newer
+        # syntax, the ceiling catches dependencies that have not caught up.
+        python: ['3.11', '3.13']
+    name: test (py${{ matrix.python }})
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # The extension is built from source during `uv sync`, so the toolchain has
+      # to be present before that step rather than alongside it.
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+          python-version: ${{ matrix.python }}
+
+      # --locked, not --frozen: this fails loudly when pyproject.toml was edited
+      # without re-locking, rather than silently resolving something else.
+      - name: sync
+        run: uv sync --locked --all-extras
+
+      - name: ruff
+        run: |
+          uvx ruff@0.14.5 format --check .
+          uvx ruff@0.14.5 check .
+
+      - name: mypy
+        run: uv run mypy
+
+      - name: pytest
+        run: uv run pytest --cov --cov-report=term-missing --cov-report=xml
+
+      # Executes each notebook and fails on any exception, so an example cannot
+      # rot into documentation that no longer runs.
+      - name: examples execute
+        run: |
+          for nb in examples/*.py; do
+            echo "--- $nb"
+            uv run marimo export html "$nb" -o /dev/null
+          done
+
+      # Proves the benchmark harness still runs. Deliberately not timed: shared
+      # runners vary by roughly 2x and a flaky performance gate is a gate people
+      # learn to ignore. Real numbers are measured on known hardware and
+      # committed — see docs/benchmarks.md.
+      - name: benchmarks smoke-run
+        run: uv run --group bench pytest benchmarks/ -q --benchmark-disable
+
+      - name: cargo fmt
+        # --all: the manifest is a workspace root with no targets of its own, so
+        # without it cargo exits "Failed to find targets" instead of formatting.
+        run: cargo fmt --all --manifest-path rust/Cargo.toml -- --check
+
+      # Scoped to the core crate, and that is the crate split paying off rather
+      # than a workaround: core has no pyo3 dependency, so linting, testing and
+      # covering it need no Python interpreter. --workspace would pull in the
+      # bindings crate, whose abi3-py311 feature then fails against whatever
+      # python3 the runner happens to have.
+      - name: cargo clippy
+        run: cargo clippy -p mlb-dfs-solver-core --manifest-path rust/Cargo.toml --all-targets -- -D warnings
+
+      - name: cargo test
+        run: cargo test --manifest-path rust/Cargo.toml -p mlb-dfs-solver-core
+
+      - if: matrix.python == '3.11'
+        uses: taiki-e/install-action@cargo-llvm-cov
+      - if: matrix.python == '3.11'
+        name: cargo llvm-cov
+        run: >-
+          cargo llvm-cov --manifest-path rust/Cargo.toml
+          -p mlb-dfs-solver-core --fail-under-lines 90
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-py${{ matrix.python }}
+          path: coverage.xml
+          if-no-files-found: error
+
+  hygiene:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: uvx pre-commit run --all-files --show-diff-on-failure
+
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: '3.12'
+      # --strict turns broken links and unresolved references into failures. The
+      # docs read source statically, so nothing needs installing here.
+      - run: uv run --project docs mkdocs build --strict
+
+  # Always runs, so it is a stable required status check. This is the only check
+  # branch protection should require.
+  ci-ok:
+    if: always()
+    needs: [test, hygiene, docs]
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo '${{ toJSON(needs) }}' | tee /dev/stderr \
+            | jq -e 'all(.[]; .result == "success" or .result == "skipped")'

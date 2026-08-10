@@ -1,0 +1,62 @@
+# The single ruff configuration for every package in this repo.
+#
+# Ruff only treats a pyproject.toml as a config file when it contains a
+# [tool.ruff] section. No package pyproject may define one — that would silently
+# detach it from this baseline. tools/check_no_local_ruff.py enforces it.
+
+line-length = 100
+target-version = "py311"
+extend-exclude = ["**/__marimo__/**"]
+
+[lint]
+select = [
+    "E",    # pycodestyle errors
+    "F",    # pyflakes
+    "W",    # pycodestyle warnings
+    "I",    # isort
+    "N",    # pep8-naming
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+    "A",    # flake8-builtins
+    "C4",   # flake8-comprehensions
+    "SIM",  # flake8-simplify
+    "RUF",  # ruff-specific
+    "PT",   # flake8-pytest-style
+    "PTH",  # flake8-use-pathlib
+    "ANN",  # flake8-annotations
+    "D",    # pydocstyle — these are published libraries; mkdocstrings reads these
+    "TID",  # flake8-tidy-imports
+    "ARG",  # flake8-unused-arguments
+    "PERF", # perflint
+]
+ignore = [
+    "E501",    # line length is handled by the formatter
+    "D105",    # magic methods don't need docstrings
+    "D107",    # __init__ is documented on the class
+    "ANN401",  # Any is sometimes the honest annotation
+    "B008",    # function call in default arg — common and fine in typer/pydantic style
+]
+
+[lint.pydocstyle]
+convention = "google"
+
+[lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+[lint.per-file-ignores]
+"**/tests/**" = ["D", "ANN", "ARG", "S101", "PLR2004", "PERF401"]
+# Benchmark fixtures are written for legibility over micro-efficiency: the point
+# is that a reader can see exactly what was measured.
+"**/benchmarks/**" = ["D", "ANN", "T201", "PERF401", "RUF046"]
+# marimo cells legitimately trip these: a bare expression is how a cell renders a
+# value (B018), cells bind names used only by other cells (F841), and imports live
+# inside cells rather than at module top (E402).
+# marimo generates cell signatures from the names a cell uses, so a cell reading
+# `DK_MLB_CLASSIC` gets a non-lowercase parameter (N803) that is not ours to
+# rename. RUF001 covers typography — en dashes belong in rendered prose.
+"**/examples/**" = [
+    "D", "ANN", "B018", "F841", "E402", "T201", "ARG", "N803", "PERF401", "RUF001",
+]
+
+[format]
+docstring-code-format = true

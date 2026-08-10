@@ -1,0 +1,4 @@
+# Always use a uv-managed CPython, never whatever happens to be on PATH.
+# Without this a locally installed interpreter can be picked as the build host
+# and the environment stops matching CI.
+python-preference = "only-managed"

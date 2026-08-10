@@ -1,0 +1,78 @@
+name: release
+
+# Publishes to PyPI via Trusted Publishing: the `id-token: write` permission lets
+# the job exchange a GitHub OIDC token for a short-lived PyPI credential, so there
+# is no API token stored anywhere. PyPI must have a publisher configured for this
+# repository, this workflow filename, and the `pypi` environment — all three are
+# matched exactly, and a mismatch surfaces as a 403 that does not say which field
+# is wrong.
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: '3.12'
+
+      # A tag that disagrees with pyproject.toml would publish a version nobody
+      # can find in the repository. Catch it before anything is built.
+      - name: tag matches project version
+        run: |
+          expected="${{ github.ref_name }}"
+          expected="${expected#v}"
+          actual=$(uv version --short)
+          if [ "$actual" != "$expected" ]; then
+            echo "tag says $expected but pyproject.toml says $actual" >&2
+            exit 1
+          fi
+
+      - run: uv build
+      - name: metadata is valid
+        run: uvx twine check --strict dist/*
+
+      # TestPyPI is skipped on purpose: separate namespace, different dependency
+      # universe, so a successful upload there proves little. This proves the
+      # actual thing — the built wheel installs clean and imports.
+      - name: built wheel installs and imports
+        run: |
+          uv run --no-project --isolated --python 3.12 \
+            --with "$(echo dist/*.whl)" \
+            python -c "import mlb_dfs_solver; print(mlb_dfs_solver.__version__)"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    # Protect this environment with a required reviewer in the repository
+    # settings. It is the last thing between a mistaken tag push and a permanent,
+    # unrepeatable version number on PyPI.
+    environment:
+      name: pypi
+      url: https://pypi.org/p/mlb-dfs-solver
+    permissions:
+      id-token: write
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@release/v1
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true

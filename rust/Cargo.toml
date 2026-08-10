@@ -1,0 +1,42 @@
+# Two crates, deliberately.
+#
+# `mlb_dfs_solver-core` holds every algorithm and has no pyo3 dependency at all. That is
+# what makes `cargo test -p mlb_dfs_solver-core` and `cargo llvm-cov` work with no Python
+# interpreter, no libpython on the loader path, and no coverage noise from binding
+# glue.
+#
+# `mlb_dfs_solver-native` is the pyo3 extension: a `#[pymodule]`, some argument
+# marshalling, and nothing else worth measuring.
+#
+# The single-crate version of this could not run its own Rust unit tests. Enabling
+# pyo3's `extension-module` feature tells it not to link libpython, which is
+# required for the wheel and fatal for a test binary; disabling it makes the tests
+# link but then fail to load libpython at runtime. Splitting sidesteps the choice
+# rather than papering over it with LD_LIBRARY_PATH.
+
+[workspace]
+members = ["core", "native"]
+resolver = "2"
+
+[workspace.package]
+version = "0.0.1"
+edition = "2021"
+rust-version = "1.74"
+license = "Apache-2.0"
+publish = false
+
+[workspace.dependencies]
+rayon = "1.10"
+rand = "0.10"
+rand_xoshiro = "0.8"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+# Deliberately NOT panic = "abort": PyO3 converts Rust panics into Python
+# exceptions, which requires unwinding. Aborting would take the interpreter down.
+
+# There is intentionally no .cargo/config.toml with `-C target-cpu=native`.
+# That flag bakes the build machine's ISA into the wheel, so a wheel built on a
+# runner with AVX-512 executes an illegal instruction on a user's older CPU.
+# The AVX2 kernels use runtime `is_x86_feature_detected!` dispatch instead.

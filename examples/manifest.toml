@@ -1,0 +1,7 @@
+# How the docs build renders each example.
+#
+# "wasm" exports an interactive notebook that runs in the reader's browser via
+# Pyodide, which only works when every dependency has a Pyodide wheel.
+# "static" pre-executes and bakes in the outputs.
+[export]
+mode = "static"
