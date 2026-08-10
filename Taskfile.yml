@@ -1,0 +1,107 @@
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+#
+# Thin wrappers over uv. Nothing here is required to build, test or publish; CI
+# calls the underlying commands directly, so a broken task can never be the reason
+# a release differs from what you tested.
+#
+# Run `task` with no arguments for the list. Tasks always execute from the
+# repository root regardless of where you invoke them — Task walks up to find this
+# file and treats its directory as the working directory — so `task bench` works
+# from inside benchmarks/.
+#
+# Contributors do not need `task` on PATH: `uvx --from go-task-bin task <name>`
+# runs it straight from PyPI, so uv remains the one required tool.
+
+version: '3'
+
+vars:
+  # Pinned to match .pre-commit-config.yaml. An unpinned `uvx ruff` picks the
+  # latest release and the formatter's output changes between versions, so
+  # `task lint` passing while the pre-commit hook fails in CI is not hypothetical.
+  RUFF: ruff@0.14.5
+
+tasks:
+  default:
+    desc: Show the available tasks.
+    cmds: [task --list]
+    silent: true
+
+  test:
+    desc: Run the tests with coverage.
+    cmds:
+      - uv run pytest --cov --cov-report=term-missing
+
+  lint:
+    desc: ruff check + format check.
+    cmds:
+      - uvx {{.RUFF}} check .
+      - uvx {{.RUFF}} format --check .
+
+  fmt:
+    desc: ruff format + autofix, and cargo fmt.
+    cmds:
+      - uvx {{.RUFF}} format .
+      - uvx {{.RUFF}} check --fix .
+      - cargo fmt --all --manifest-path rust/Cargo.toml
+
+  typecheck:
+    desc: mypy.
+    cmds:
+      - uv run mypy
+
+  bench:
+    desc: 'Full benchmark run: writes benchmarks/results/.'
+    cmds:
+      - uv run --group bench pytest benchmarks/ --benchmark-json=.benchmark.json --benchmark-only
+      - uv run --no-project --python 3.12 --with psutil tools/bench_report.py .benchmark.json --write
+
+  bench-quick:
+    desc: Smoke-run the benchmarks, no timings recorded.
+    cmds:
+      - uv run --group bench pytest benchmarks/ -q --benchmark-disable
+
+  examples:
+    desc: Execute every marimo example.
+    cmds:
+      - for: {var: NOTEBOOKS}
+        cmd: |
+          echo "--- {{.ITEM}}"
+          uv run marimo export html "{{.ITEM}}" -o /dev/null
+    vars:
+      NOTEBOOKS:
+        sh: ls examples/*.py
+
+  docs:
+    desc: Serve the docs site on :8000.
+    cmds:
+      - uv run --project docs mkdocs serve
+
+  docs-build:
+    desc: Build the docs, failing on broken links.
+    cmds:
+      - uv run --project docs mkdocs build --strict
+
+  wheel:
+    desc: Build the wheel and check it imports on the floor and the ceiling.
+    cmds:
+      - uv build --wheel
+      # abi3's whole claim is that one wheel covers every later interpreter, and
+      # a build never exercises that — only loading it on each version does.
+      - for: ['3.11', '3.14']
+        cmd: |
+          echo "--- python {{.ITEM}}"
+          uv run --no-project --isolated --python "{{.ITEM}}" --with "$(echo dist/*.whl)" \
+            python -c "import mlb_dfs_solver as m; print(m.__version__, m.active_isa())"
+
+  lock:
+    desc: Re-lock dependencies.
+    cmds:
+      - uv lock
+      - cargo update --manifest-path rust/Cargo.toml --workspace
+
+  clean:
+    desc: Remove build artifacts and caches.
+    cmds:
+      - find . -name '__pycache__' -prune -exec rm -rf {} + 2>/dev/null || true
+      - find . -name '.pytest_cache' -prune -exec rm -rf {} + 2>/dev/null || true
+      - rm -rf site dist .benchmark.json rust/target

@@ -8,7 +8,7 @@ comparison is between two things that do the same job.
 Run the full suite and record a result:
 
 ```bash
-make bench          # from the repository root
+task bench
 ```
 
 That writes `results/<hardware-id>/<date>-<sha>.json`, which is committed. The docs

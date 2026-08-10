@@ -21,7 +21,10 @@ resolver = "2"
 [workspace.package]
 version = "0.0.1"
 edition = "2021"
-rust-version = "1.74"
+# Set by pyo3 0.29, which requires 1.83. The core crate itself needs far less, but
+# a second MSRV for one unpublished crate is bookkeeping with no consumer — both
+# crates are `publish = false` and CI builds on stable.
+rust-version = "1.83"
 license = "Apache-2.0"
 publish = false
 

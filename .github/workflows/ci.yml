@@ -19,7 +19,7 @@ jobs:
       matrix:
         # Oldest supported and newest stable: the floor catches use of newer
         # syntax, the ceiling catches dependencies that have not caught up.
-        python: ['3.11', '3.13']
+        python: ['3.11', '3.14']
     name: test (py${{ matrix.python }})
     runs-on: ubuntu-latest
     steps:

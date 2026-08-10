@@ -16,5 +16,5 @@ mlb-dfs-solver-core = { path = "../core" }
 # `extension-module` is added by maturin at build time (see the `features` key in
 # pyproject.toml) rather than being enabled here, so that anything depending on
 # this crate outside a wheel build still links.
-pyo3 = { version = "0.24", features = ["abi3-py311"] }
-numpy = "0.24"
+pyo3 = { version = "0.29", features = ["abi3-py311"] }
+numpy = "0.29"

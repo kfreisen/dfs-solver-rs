@@ -22,9 +22,28 @@ Install the hooks once:
 uvx pre-commit install
 ```
 
+## Common tasks
+
+`Taskfile.yml` wraps the everyday commands — [Task](https://taskfile.dev) with no
+arguments lists them. Nothing in it is required to build, test or publish; CI calls
+the underlying commands directly, so a broken task can never be the reason a
+release differs from what you tested.
+
+You do not have to install anything for it. `uvx --from go-task-bin task <name>`
+runs it from PyPI, which keeps `uv` the single required tool:
+
+```bash
+uvx --from go-task-bin task          # list tasks
+uvx --from go-task-bin task test
+```
+
+If you use it often, `uv tool install go-task-bin` puts a plain `task` on PATH.
+Tasks always run from the repository root, so `task bench` works from any
+subdirectory.
+
 **Run `pre-commit`, not bare `ruff`.** The hooks pin a ruff version; a bare
 `uvx ruff` resolves to the latest release, and the formatter's output changes
-between versions. `make lint` uses the pinned version for the same reason.
+between versions. `task lint` uses the pinned version for the same reason.
 
 ## The bar for a change
 
@@ -54,7 +73,7 @@ Two rules follow:
 Real numbers are produced on a known machine and committed by hand:
 
 ```bash
-make bench
+task bench
 ```
 
 That writes `benchmarks/results/<hardware-id>/<date>-<sha>.json`, including a

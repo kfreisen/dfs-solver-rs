@@ -43,7 +43,7 @@ Neither asserts a duration.
 Real measurements are taken on a known machine:
 
 ```bash
-make bench
+task bench
 ```
 
 That writes `benchmarks/results/<hardware-id>/<date>-<sha>.json`, which is

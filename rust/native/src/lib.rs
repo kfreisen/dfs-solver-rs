@@ -108,11 +108,13 @@ fn build_lineups<'py>(
 
     let roster_size = spec.roster_size();
 
-    // Release the GIL for the work itself: construction is pure computation over
-    // borrowed buffers and touches no Python object, so holding it would serialize
-    // every caller in a threaded process for nothing.
+    // Detach from the interpreter for the work itself: construction is pure
+    // computation over borrowed buffers and touches no Python object, so staying
+    // attached would serialize every caller in a threaded process for nothing.
+    // (`detach` is pyo3 0.27's name for what was `allow_threads` — the rename is
+    // deliberate, since on a free-threaded build there is no GIL to release.)
     let lineups = py
-        .allow_threads(|| greedy::build_lineups(&pool, &spec, &config))
+        .detach(|| greedy::build_lineups(&pool, &spec, &config))
         .map_err(|e| PyValueError::new_err(e.to_string()))?;
 
     let rows = lineups.len();
