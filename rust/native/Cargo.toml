@@ -1,0 +1,20 @@
+[package]
+name = "mlb-dfs-solver-native"
+description = "PyO3 bindings for mlb_dfs_solver-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+name = "mlb_dfs_solver_native"
+crate-type = ["cdylib"]
+
+[dependencies]
+mlb-dfs-solver-core = { path = "../core" }
+# `extension-module` is added by maturin at build time (see the `features` key in
+# pyproject.toml) rather than being enabled here, so that anything depending on
+# this crate outside a wheel build still links.
+pyo3 = { version = "0.29", features = ["abi3-py311"] }
+numpy = "0.29"

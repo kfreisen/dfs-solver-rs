@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# Raw pytest-benchmark output. Only the normalized, hardware-tagged JSON under
+# benchmarks/results/ is committed — see docs/benchmarks.md.
+.benchmark.json
+
+# Testing / coverage
+.pytest_cache/
+.hypothesis/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.benchmarks/
+
+# Type checking / linting
+.mypy_cache/
+.ruff_cache/
+
+# Rust
+target/
+*.so
+*.pyd
+*.dylib
+
+# Docs
+site/
+
+# marimo
+__marimo__/
+*.marimo.html
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
+
+# Secrets — must never land in a public repo
+.env
+.env.*
+!.env.example
+*.pem
+*.key

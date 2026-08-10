@@ -1,0 +1,13 @@
+[package]
+name = "mlb-dfs-solver-core"
+description = "Roster optimization algorithms. No Python, by design."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+rayon.workspace = true
+rand.workspace = true
+rand_xoshiro.workspace = true

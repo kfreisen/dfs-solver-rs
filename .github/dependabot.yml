@@ -1,0 +1,34 @@
+version: 2
+
+updates:
+  # Action versions rot silently and are a supply-chain surface. Grouped into one
+  # pull request so this is a weekly glance rather than several notifications.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ['*']
+
+  - package-ecosystem: uv
+    directories:
+      - /
+      - /docs
+    schedule:
+      interval: weekly
+    groups:
+      python-minor:
+        patterns: ['*']
+        update-types: [minor, patch]
+
+  - package-ecosystem: cargo
+    directory: /rust
+    schedule:
+      interval: weekly
+    groups:
+      rust:
+        patterns: ['*']
+        # pyo3 and numpy must move together — the numpy crate pins a pyo3 range,
+        # and bumping either alone produces an unresolvable build.
+        exclude-patterns: ['pyo3', 'numpy']

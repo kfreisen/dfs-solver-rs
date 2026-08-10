@@ -1,0 +1,171 @@
+{
+  "schema": 1,
+  "package": "mlb_dfs_solver",
+  "version": "0.0.1.dev0",
+  "git_sha": "c783145",
+  "timestamp": "2026-08-10T14:41:45+00:00",
+  "hardware": {
+    "id": "12th-gen-intel-core-i9-12900h-linux",
+    "cpu": "12th Gen Intel(R) Core(TM) i9-12900H",
+    "cores": 20,
+    "ram_gb": 62.5,
+    "os": "Linux 6.17.9-76061709-generic",
+    "python": "3.12.13"
+  },
+  "cases": [
+    {
+      "name": "build/3",
+      "impl": "slatekit_rust",
+      "params": {
+        "num_lineups": 3,
+        "pool": 90
+      },
+      "metric": "seconds",
+      "n": 375,
+      "mean": 0.0001599963780802985,
+      "median": 0.0001463169464841485,
+      "stddev": 6.0512835254609346e-05,
+      "min": 7.75909866206348e-05
+    },
+    {
+      "name": "build/10",
+      "impl": "slatekit_rust",
+      "params": {
+        "num_lineups": 10,
+        "pool": 90
+      },
+      "metric": "seconds",
+      "n": 3877,
+      "mean": 0.0002662234241112842,
+      "median": 0.0001305940095335245,
+      "stddev": 0.0011970191839876182,
+      "min": 7.454300066456199e-05
+    },
+    {
+      "name": "build/20",
+      "impl": "slatekit_rust",
+      "params": {
+        "num_lineups": 20,
+        "pool": 90
+      },
+      "metric": "seconds",
+      "n": 8396,
+      "mean": 0.0003310889665523465,
+      "median": 0.00014131501666270196,
+      "stddev": 0.0015133025357859152,
+      "min": 7.418700261041522e-05
+    },
+    {
+      "name": "build/150",
+      "impl": "slatekit_rust",
+      "params": {
+        "num_lineups": 150,
+        "pool": 90
+      },
+      "metric": "seconds",
+      "n": 2661,
+      "mean": 0.0006499577927281006,
+      "median": 0.00035855500027537346,
+      "stddev": 0.002413257449468642,
+      "min": 0.0002450910396873951
+    },
+    {
+      "name": "build/1000",
+      "impl": "slatekit_rust",
+      "params": {
+        "num_lineups": 1000,
+        "pool": 90
+      },
+      "metric": "seconds",
+      "n": 758,
+      "mean": 0.0033418656099375122,
+      "median": 0.002546369010815397,
+      "stddev": 0.0021998868126802754,
+      "min": 0.0012019749847240746
+    },
+    {
+      "name": "build/3",
+      "impl": "reference_python",
+      "params": {
+        "num_lineups": 3,
+        "pool": 90
+      },
+      "metric": "seconds",
+      "n": 1326,
+      "mean": 0.00047450589195531577,
+      "median": 0.0004528924764599651,
+      "stddev": 0.00012903135287446412,
+      "min": 0.00030826800502836704
+    },
+    {
+      "name": "build/10",
+      "impl": "reference_python",
+      "params": {
+        "num_lineups": 10,
+        "pool": 90
+      },
+      "metric": "seconds",
+      "n": 756,
+      "mean": 0.001696358367793937,
+      "median": 0.0013620664540212601,
+      "stddev": 0.0008858733558077042,
+      "min": 0.0011579749989323318
+    },
+    {
+      "name": "build/20",
+      "impl": "reference_python",
+      "params": {
+        "num_lineups": 20,
+        "pool": 90
+      },
+      "metric": "seconds",
+      "n": 358,
+      "mean": 0.0029849073704587056,
+      "median": 0.0027987619978375733,
+      "stddev": 0.0005542878596357304,
+      "min": 0.0024418539833277464
+    },
+    {
+      "name": "build/150",
+      "impl": "reference_python",
+      "params": {
+        "num_lineups": 150,
+        "pool": 90
+      },
+      "metric": "seconds",
+      "n": 28,
+      "mean": 0.061368826884842874,
+      "median": 0.0662015649722889,
+      "stddev": 0.012327469860781487,
+      "min": 0.03745930199511349
+    },
+    {
+      "name": "build/3",
+      "impl": "milp_pulp_cbc",
+      "params": {
+        "num_lineups": 3,
+        "pool": 90
+      },
+      "metric": "seconds",
+      "n": 3,
+      "mean": 60.83333455400619,
+      "median": 60.83098881196929,
+      "stddev": 0.05769087228812581,
+      "min": 60.77685233100783
+    },
+    {
+      "name": "build/10",
+      "impl": "milp_pulp_cbc",
+      "params": {
+        "num_lineups": 10,
+        "pool": 90
+      },
+      "metric": "seconds",
+      "n": 3,
+      "mean": 151.60973314733323,
+      "median": 151.6313984330045,
+      "stddev": 0.052327475802749136,
+      "min": 151.55005251301918
+    }
+  ]
+}

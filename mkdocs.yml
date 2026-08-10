@@ -1,0 +1,76 @@
+site_name: mlb-dfs-solver
+site_description: "Fast roster optimization: randomized greedy construction and submodular portfolio selection, in Rust."
+site_url: https://kfreisen.github.io/mlb-dfs-solver/
+repo_url: https://github.com/kfreisen/mlb-dfs-solver
+repo_name: kfreisen/mlb-dfs-solver
+edit_uri: edit/main/docs/
+
+docs_dir: docs
+
+# The docs build environment lives inside docs_dir; keep it out of the built site.
+exclude_docs: |
+  pyproject.toml
+  uv.lock
+  hooks/
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - content.action.edit
+    - search.suggest
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+
+plugins:
+  - search
+  # mkdocstrings reads source statically through griffe, so the docs build never
+  # has to install the package or its dependencies.
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: ['python']
+          options:
+            docstring_style: google
+            show_source: true
+            show_root_heading: true
+            separate_signature: true
+            signature_crossrefs: true
+            merge_init_into_class: true
+
+# Renders committed benchmark JSON into tables at build time, so a published
+# number cannot disagree with the data in the repository.
+hooks:
+  - docs/hooks/bench_tables.py
+
+markdown_extensions:
+  # Lets a docs page include the README verbatim, keeping the PyPI description
+  # and the docs page the same text.
+  - pymdownx.snippets:
+      base_path: ['.']
+      check_paths: true
+  - pymdownx.superfences
+  - pymdownx.details
+  - admonition
+  - tables
+  - toc:
+      permalink: true
+
+nav:
+  - Overview: index.md
+  - Benchmarks: benchmarks.md
+  - Examples: examples.md
+  - API: api.md
+  - How benchmarks work: methodology.md
+  - Contributing: contributing.md

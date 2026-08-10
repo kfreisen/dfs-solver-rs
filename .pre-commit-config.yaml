@@ -1,0 +1,52 @@
+minimum_pre_commit_version: "3.5.0"
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.14.5
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: https://github.com/astral-sh/uv-pre-commit
+    rev: 0.9.9
+    hooks:
+      - id: uv-lock
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-yaml
+      - id: check-toml
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-added-large-files
+        args: [--maxkb=512]
+      - id: check-merge-conflict
+      - id: check-case-conflict
+      # This repo is public and the source it was extracted from was not.
+      - id: detect-private-key
+
+  - repo: https://github.com/crate-ci/typos
+    rev: v1.40.1
+    hooks:
+      - id: typos
+
+  - repo: local
+    hooks:
+      # Catches what a YAML parser cannot: unavailable contexts, retired runner
+      # labels, bad `needs` references — mistakes that otherwise only surface as
+      # a failed run on a pushed branch.
+      - id: actionlint
+        name: actionlint
+        entry: uvx --from actionlint-py actionlint
+        language: system
+        pass_filenames: false
+        files: ^\.github/workflows/.*\.ya?ml$
+
+      - id: cargo-fmt
+        name: cargo fmt
+        entry: cargo fmt --all --manifest-path rust/Cargo.toml --
+        language: system
+        types: [rust]
+        files: ^rust/

@@ -1,0 +1,15 @@
+[project]
+name = "docs"
+version = "0"
+description = "Documentation build environment. Not published."
+requires-python = ">=3.11"
+dependencies = [
+    "mkdocs>=1.6",
+    "mkdocs-material>=9.5",
+    # Reads source statically via griffe, so the docs environment never needs the
+    # package's own dependencies installed.
+    "mkdocstrings[python]>=0.26",
+]
+
+[tool.uv]
+package = false
