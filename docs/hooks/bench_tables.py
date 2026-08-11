@@ -9,6 +9,14 @@ and this hook replaces it with tables built from
 ``benchmarks/results/<hardware-id>/<date>-<sha>.json`` at build time.
 If the JSON is not committed, the page says so rather than showing a stale figure.
 
+A narrative page wants one comparison rather than all of them, and quoting it in
+prose would be exactly the hand-typed number this exists to prevent. So there is a
+second, smaller placeholder::
+
+    <!-- headline -->
+
+which renders only the end-to-end pipeline table.
+
 Results are grouped by hardware, because a speedup measured on one machine is a claim
 about that machine. The most recent file per hardware wins; older files stay in the
 repository as history.
@@ -23,6 +31,11 @@ from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 PLACEHOLDER = re.compile(r"^<!--\s*benchmarks\s*-->\s*$", re.MULTILINE)
+# A second, smaller placeholder. A narrative page wants the one comparison the
+# whole package rests on, not sixty rows of it — and quoting that comparison in
+# prose would put typed numbers in a document, which is the thing this hook
+# exists to prevent.
+HEADLINE = re.compile(r"^<!--\s*headline\s*-->\s*$", re.MULTILINE)
 
 
 def latest_results() -> list[dict[str, Any]]:
@@ -189,6 +202,46 @@ def render() -> str:
     return "\n".join(lines)
 
 
+def render_headline() -> str:
+    """Render the end-to-end comparison alone, for a narrative page."""
+    for result in latest_results():
+        timed = [
+            case
+            for case in result["cases"]
+            if case["name"].startswith("pipeline/")
+            and case.get("quality")
+            and case.get("metric", "seconds") == "seconds"
+        ]
+        by_impl = {case["impl"]: case for case in timed}
+        ours = by_impl.get("slatekit_rust")
+        solver = by_impl.get("milp_ortools_cpsat")
+        if not (ours and solver):
+            continue
+
+        hw = result["hardware"]
+        lines = [
+            f"*{ours.get('detail', '')}. Measured on {hw['cpu']}, {result['timestamp'][:10]}.*",
+            "",
+            "| | Time | Median entry vs optimum | Overlap between entries | In the money |",
+            "| --- | ---: | ---: | ---: | ---: |",
+        ]
+        for label, case in (("This package", ours), ("Solver + no-good cuts", solver)):
+            q = case["quality"]
+            lines.append(
+                f"| {label} | {case['median']:.2f} s | {q['median_ratio']:.0%} | "
+                f"{q['overlap']:.0%} | **{q['p_in_the_money']:.0%}** |"
+            )
+        lines.append("")
+        return "\n".join(lines)
+
+    return (
+        "!!! note\n"
+        "    No end-to-end benchmark has been committed yet — see "
+        "[How benchmarks work](methodology.md).\n"
+    )
+
+
 def on_page_markdown(markdown: str, **_kwargs: Any) -> str:
     """Substitute every benchmark placeholder on the page."""
-    return PLACEHOLDER.sub(lambda _m: render(), markdown)
+    markdown = PLACEHOLDER.sub(lambda _m: render(), markdown)
+    return HEADLINE.sub(lambda _m: render_headline(), markdown)

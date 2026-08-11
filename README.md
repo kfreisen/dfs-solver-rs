@@ -25,10 +25,17 @@ Two different problems, usually conflated:
    simulated outcomes. Optimality per lineup is close to worthless here — 150 optimal lineups are
    150 nearly identical lineups. What matters is diverse coverage of the outcome space.
 
-For (2), asking an ILP for 150 solutions is both slow and the wrong objective. `mlb_dfs_solver`
-generates a large randomized-greedy candidate pool and then selects from it by **lazy-greedy
-submodular maximization** (Minoux), scoring each candidate by what it adds to the portfolio
-rather than by its own merit.
+For (2), asking an ILP for 150 solutions optimizes the wrong thing. It returns the top 150
+rosters by projection, which differ from each other by a player or two and therefore win and lose
+together — one lineup entered a hundred and fifty times. `mlb_dfs_solver` generates a large
+randomized-greedy candidate pool and then selects from it by **lazy-greedy submodular
+maximization** (Minoux), scoring each candidate by what it adds to the portfolio rather than by
+its own merit.
+
+Speed is the smaller half of the argument, and worth stating precisely: a solver makes 150
+lineups in seconds, not minutes. What it cannot do is make the *candidate pool* — twenty thousand
+lineups by no-good cut is roughly forty minutes, and they would be the twenty thousand most
+similar lineups available.
 
 Cash games and tournaments get different objectives, because they want different things. A cash
 game pays a flat amount for beating a line, so entries are judged alone and diversity is actively

@@ -38,12 +38,21 @@ expensive shortstop they all share has a quiet night, all 150 entries fail at
 once. You have bought one lineup a hundred and fifty times and paid a hundred and
 fifty entry fees for it.
 
-Measured on a realistic slate against a 100,000-entry field, that portfolio puts
-an entry in the top 0.1% in 78% of simulated outcomes, and it takes about five
-seconds to build. The approach described below reaches 86% in under two tenths of
-a second — while every one of its individual lineups is *worse* than the
-solver's. Per-lineup quality and portfolio quality are close to opposites here,
-and only one of them is what a contest pays for.
+Here is that measured, against an independent field, both approaches asked for
+the same 150 entries:
+
+<!-- headline -->
+
+Every individual lineup the solver produced is *better* than ours — its median
+entry is the optimum, because it returned the top 150 by projection. The
+portfolio is worse. Per-lineup quality and portfolio quality are close to
+opposites here, and only one of them is what a contest pays for.
+
+Speed is the smaller half of the argument and worth stating precisely: a solver
+makes 150 lineups in seconds. What it cannot make is the *candidate pool* the
+next section needs — twenty thousand lineups by no-good cut is roughly forty
+minutes of solving, and they would be the twenty thousand most similar lineups
+available.
 
 ## Three stages
 
@@ -135,12 +144,15 @@ Every mode needs a score to beat, and it is one value **per outcome**, not a
 constant. This is the single easiest thing to get wrong, and getting it wrong
 silently produces numbers that look fine.
 
-On a realistic slate, the field's median score swings about 65 points between
-simulated outcomes, while lineups within a single outcome differ by about 11. The
-world matters six times more than the roster. Judged against a fixed bar, "did
-this lineup cash?" correlates 0.98 with "was it a high-scoring slate" — and that
-is no edge at all, because every rival entry also scored more in those worlds.
-What pays is beating the field *in the same world*.
+On a realistic slate the field's median score swings between simulated outcomes
+several times more than lineups differ from each other within any one outcome.
+The world matters more than the roster. Judged against a fixed bar, "did this
+lineup cash?" turns out to be almost entirely a question of whether it was a
+high-scoring slate — and that is no edge at all, because every rival entry also
+scored more in those worlds. What pays is beating the field *in the same world*.
+
+The benchmark records the size of that swing, under `win_line_spread`; it is
+about half the score of an entire lineup.
 
 [`field_line`][mlb_dfs_solver.select.field_line] reads a per-outcome bar off a
 score matrix. Better still is a bar computed from a model of the actual field —
@@ -199,8 +211,9 @@ Stated plainly, because a library's gaps matter as much as its features.
   not expressible. Nobody has needed it.
 - **Value-aware construction.** The builder ranks by projection and never by
   points per dollar, so on a slate with mispriced players its best candidate
-  plateaus around 93% of the true optimum however many you generate. Selection
-  cannot fix that; better construction would.
+  plateaus short of the true optimum however many you generate — see
+  `best_ratio` on the benchmarks page. Selection cannot fix that; better
+  construction would.
 
 ## Reading the numbers
 

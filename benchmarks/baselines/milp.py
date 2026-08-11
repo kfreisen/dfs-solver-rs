@@ -15,9 +15,17 @@ Getting genuine diversity out of a solver means adding no-good cuts or overlap
 constraints and re-solving once per lineup, and the cost of that is what the
 benchmark measures.
 
-So the honest framing is: **per-lineup quality favors the solver, and
-lineups-per-second favors the greedy builder by orders of magnitude.** Both numbers
-are reported.
+So the honest framing is: **per-lineup quality favors the solver, and portfolio
+quality favors randomized construction plus selection.** Both are measured, in
+`bench_pipeline.py`.
+
+Speed is the smaller part of the story and was long overstated here. On a
+realistic slate CBC produces a 150-entry portfolio in about eighteen seconds —
+not the "15-20 seconds per lineup" this file used to claim, which was measured on
+a degenerate slate where eleven clones of every player sent branch-and-bound
+hunting through interchangeable optima. What a solver genuinely cannot do is
+produce a *candidate pool*: twenty thousand lineups by no-good cut is about forty
+minutes, and they would be the twenty thousand most similar lineups available.
 
 PuLP with the bundled CBC is the baseline because it is open source and installs
 everywhere. OR-Tools' CP-SAT is included as a second opinion — it is markedly
@@ -416,10 +424,16 @@ def solve_portfolio_pulp(
 
     This is the apples-to-apples comparison against `mlb_dfs_solver.build_lineups`.
 
-    Measured cost is roughly 15-20 seconds per lineup on a 90-player slate, and it
-    does not grow superlinearly at small portfolio sizes despite each solve
-    carrying one more no-good cut than the last — the cuts are cheap next to the
-    solve itself.
+    Measured at roughly 119 ms per lineup on the shared 288-player slate, and it
+    does not grow superlinearly despite each solve carrying one more no-good cut
+    than the last — the cuts are cheap next to the solve itself.
+
+    That per-lineup cost is extremely sensitive to the slate rather than to its
+    size. On a slate with many tied `(salary, projection)` pairs the same solver
+    took 80 seconds per lineup, 676 times slower, because proving optimality
+    means ruling out every interchangeable alternative. A benchmark that reports
+    solver time without saying whether its inputs are degenerate is reporting
+    the degeneracy.
     """
     return _portfolio(
         solve_milp_pulp,

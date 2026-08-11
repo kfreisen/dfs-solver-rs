@@ -1,27 +1,33 @@
-"""Benchmark: greedy construction against MILP and against pure Python.
+"""Benchmark: how construction scales with the size of the pool asked for.
 
-Three implementations of the same job, on the same slate:
+The other files answer different questions. `bench_constraints.py` measures what
+each rule costs, `bench_pipeline.py` compares the whole job against the whole
+alternative, and `bench_quality.py` asks whether the output is any good. This one
+does the narrow thing its name says: how does building `n` lineups scale in `n`,
+for the kernel and for the pure-Python transcription that serves as its oracle.
 
-* `mlb_dfs_solver` — the Rust kernel.
-* `reference` — the pure-Python transcription in `baselines/reference.py`, which
-  is also the parity oracle. This is the honest measure of what the port bought.
-* `milp_pulp` / `milp_ortools` — solver formulations from `baselines/milp.py`,
-  producing distinct lineups via no-good cuts.
+That scaling is the reason the pipeline works at all. Selection needs a pool far
+larger than the portfolio — tens of thousands of candidates to choose 150 from —
+so the cost of the ten-thousandth lineup matters much more than the cost of the
+first.
 
-Reported as **lineups per second**, not seconds, so portfolio sizes that differ by
-two orders of magnitude can be compared at all.
+**A correction, recorded because the old numbers were published.** This file used
+to run on a slate of its own with only twelve distinct `(salary, projection)`
+pairs across ninety players — eleven exact clones of everybody. It reported CBC
+at "roughly 15-20 seconds per lineup" and noted that twenty lineups would not
+finish in fifteen minutes. Both were true of that slate and neither is true of
+the problem: the ties sent branch-and-bound hunting through interchangeable
+optima. On the shared realistic slate CBC produces 150 lineups in about eighteen
+seconds, some 119 ms each — roughly 676 times faster per lineup than the figure
+this file used to publish.
 
-A note on what was expected and what was measured: the solver path adds a no-good
-cut per lineup, so its cost looked like it should grow superlinearly. It does not,
-at these sizes — roughly 20 s/lineup at n=3 and 15 s/lineup at n=10, i.e. slightly
-*better* per lineup as the fixed setup cost amortizes. The cuts are cheap next to
-the solve. Claiming superlinearity would have been a nice story and the numbers do
-not support it.
-
-Quality is measured in `bench_quality.py` and the cost of each constraint in
-`bench_constraints.py`. Speed alone would be a misleading thing to publish, since
-the solver produces better individual lineups and is complete where this is not —
-the comparison would look like a win on every axis if only time were reported.
+So the solver is not slow at making a hundred and fifty lineups, and this package
+should not claim it is. What the solver cannot do is make *twenty thousand*: at
+119 ms each that is forty minutes, and they would be the top twenty thousand by
+projection, which is the most redundant set of lineups obtainable. The argument
+for randomized construction is throughput at candidate-pool scale and the
+portfolio that selection then builds — see `bench_pipeline.py` — not that a
+solver struggles with a portfolio.
 
 Run with:
 
@@ -40,8 +46,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from baselines.milp import solve_portfolio_pulp
 from baselines.reference import build_lineups_reference
 from mlb_dfs_solver import build_lineups
-from mlb_dfs_solver.pool import PlayerPool
-from mlb_dfs_solver.presets import DK_MLB_CLASSIC
+from slates import make_slate, rung_by_name
 
 # PuLP 3.x warns that constructing LpVariable directly is deprecated in favour of a
 # 4.0 API that does not exist in 3.x. The package pins `pulp<4` precisely because
@@ -49,83 +54,67 @@ from mlb_dfs_solver.presets import DK_MLB_CLASSIC
 # is noise. Scoped to this module rather than relaxed globally.
 pytestmark = pytest.mark.filterwarnings("ignore::DeprecationWarning:pulp.*")
 
-
-def make_slate(per_position: int = 10) -> PlayerPool:
-    """A realistic-shaped DraftKings MLB slate.
-
-    Deterministic: a benchmark whose input changes between runs cannot be compared
-    against a committed result.
-    """
-    records: list[dict[str, object]] = []
-    for position in ("P", "C", "1B", "2B", "3B", "SS", "OF"):
-        count = per_position * 3 if position == "OF" else per_position
-        for k in range(count):
-            records.append(
-                {
-                    "name": f"{position}-{k}",
-                    "positions": (position,),
-                    "salary": 2500 + (k % 12) * 750,
-                    "projection": 4.0 + (k % 12) * 1.2,
-                    "stddev": 3.0 + (k % 4),
-                    "ownership": ((k * 7) % 30) / 100.0,
-                    "team": f"TM{k % 10}",
-                }
-            )
-    return PlayerPool.from_records(records, DK_MLB_CLASSIC)
+# The kernel is measured out to a real candidate-pool size, because that is the
+# regime it exists for. The oracle stops earlier only because it is ~30x slower
+# and adds nothing past the point where the shape of the curve is clear.
+KERNEL_SIZES = [10, 150, 1_000, 20_000]
+REFERENCE_SIZES = [10, 150, 1_000]
+# CBC is measured where it is genuinely usable, which — now that the slate is not
+# degenerate — includes a full 150-entry portfolio. The largest kernel size is
+# deliberately absent: 20_000 solves is about forty minutes, and the result would
+# be twenty thousand near-identical lineups.
+MILP_SIZES = [10, 150]
 
 
-# Solvers are orders of magnitude slower, so they are measured at portfolio sizes
-# that finish in reasonable time; lineups-per-second is what gets compared.
-#
-# The MILP ceiling is deliberately low: at ~15-20 seconds per lineup, 20 lineups
-# did not finish in fifteen minutes on the reference machine. That is the result,
-# not an obstacle to it.
-# The small sizes exist so every implementation shares a case: a speedup table
-# needs the same case measured on both sides, and the MILP path cannot reach the
-# large ones.
-KERNEL_SIZES = [3, 10, 20, 150, 1000]
-REFERENCE_SIZES = [3, 10, 20, 150]
-MILP_SIZES = [3, 10]
+def _record(benchmark, num_lineups: int, impl: str, pool_size: int, produced: int) -> None:
+    benchmark.extra_info["case"] = f"build/{num_lineups}"
+    benchmark.extra_info["impl"] = impl
+    benchmark.extra_info["params"] = {
+        "num_lineups": num_lineups,
+        "pool": pool_size,
+        "produced": produced,
+        "requested": num_lineups,
+    }
+
+
+@pytest.fixture(scope="module")
+def slate():
+    """The shared slate, so this table can be read next to the others."""
+    pool = make_slate()
+    return pool, rung_by_name(pool, "floor").spec
 
 
 @pytest.mark.parametrize("num_lineups", KERNEL_SIZES)
-def test_kernel(benchmark, num_lineups: int) -> None:
-    pool = make_slate()
-    benchmark.extra_info["case"] = f"build/{num_lineups}"
-    benchmark.extra_info["impl"] = "slatekit_rust"
-    benchmark.extra_info["params"] = {"num_lineups": num_lineups, "pool": len(pool)}
-
-    result = benchmark(build_lineups, pool, DK_MLB_CLASSIC, num_lineups=num_lineups, seed=1)
+def test_kernel(benchmark, slate, num_lineups: int) -> None:
+    pool, spec = slate
+    result = benchmark(
+        build_lineups, pool, spec, num_lineups=num_lineups, seed=1, attempts_per_lineup=5
+    )
+    _record(benchmark, num_lineups, "slatekit_rust", len(pool), len(result))
     assert len(result) > 0
 
 
 @pytest.mark.parametrize("num_lineups", REFERENCE_SIZES)
-def test_reference_python(benchmark, num_lineups: int) -> None:
-    pool = make_slate()
-    benchmark.extra_info["case"] = f"build/{num_lineups}"
-    benchmark.extra_info["impl"] = "reference_python"
-    benchmark.extra_info["params"] = {"num_lineups": num_lineups, "pool": len(pool)}
-
+def test_reference_python(benchmark, slate, num_lineups: int) -> None:
+    pool, spec = slate
     result = benchmark(
-        build_lineups_reference, pool, DK_MLB_CLASSIC, num_lineups=num_lineups, seed=1
+        build_lineups_reference, pool, spec, num_lineups=num_lineups, seed=1, attempts_per_lineup=5
     )
+    _record(benchmark, num_lineups, "reference_python", len(pool), len(result))
     assert len(result) > 0
 
 
 @pytest.mark.parametrize("num_lineups", MILP_SIZES)
-def test_milp_pulp(benchmark, num_lineups: int) -> None:
-    pool = make_slate()
-    benchmark.extra_info["case"] = f"build/{num_lineups}"
-    benchmark.extra_info["impl"] = "milp_pulp_cbc"
-    benchmark.extra_info["params"] = {"num_lineups": num_lineups, "pool": len(pool)}
-
-    # Few rounds: each is a full solve, and pytest-benchmark's default calibration
-    # would otherwise spend minutes here for no extra precision.
+def test_milp_pulp(benchmark, slate, num_lineups: int) -> None:
+    pool, spec = slate
+    # Few rounds: each is a full sequence of solves, and pytest-benchmark's
+    # calibration would otherwise spend a long time here for no extra precision.
     result = benchmark.pedantic(
         solve_portfolio_pulp,
-        args=(pool, DK_MLB_CLASSIC),
-        kwargs={"num_lineups": num_lineups},
-        rounds=3,
+        args=(pool, spec),
+        kwargs={"num_lineups": num_lineups, "time_limit_s": 60},
+        rounds=2,
         iterations=1,
     )
+    _record(benchmark, num_lineups, "milp_pulp_cbc", len(pool), len(result))
     assert len(result) > 0
