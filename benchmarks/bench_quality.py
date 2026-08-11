@@ -47,13 +47,12 @@ from mlb_dfs_solver import (
     CONTRARIAN,
     JitterProfile,
     build_lineups,
-    field_line,
     score_lineups,
     select_portfolio,
 )
 from mlb_dfs_solver.pool import PlayerPool
 from mlb_dfs_solver.spec import RosterSpec
-from slates import lineup_overlap, make_slate, rung_by_name
+from slates import build_field, lineup_overlap, make_slate, payout_line, rung_by_name
 
 pytestmark = pytest.mark.filterwarnings("ignore::DeprecationWarning:pulp.*")
 
@@ -69,7 +68,13 @@ REFERENCE_POPULATION = 2_000
 # How many candidates selection gets to choose from. Generation is cheap and
 # selection is the point: the ratio is what the table below measures.
 CANDIDATES = 20_000
-SIMULATIONS = 1_500
+SIMULATIONS = 1_000
+# Entries other people put in. Independent of our candidates, which is the whole
+# point — see `build_field`.
+FIELD_ENTRIES = 200_000
+# What fraction of the field gets paid. A top-heavy tournament, which is the
+# contest the tournament mode exists for; the wider tiers saturate.
+PAYOUT_FRACTIONS = (0.20, 0.01, 0.001)
 
 
 def random_population(pool: PlayerPool, spec: RosterSpec, **kwargs: object) -> np.ndarray:
@@ -262,10 +267,13 @@ def test_selection(benchmark, rung_name: str) -> None:
     universe = simulated_universe(pool)
     sim = score_lineups(pool, spec, candidates, universe)
 
-    # Per outcome, not a constant: the field's score swings far more between
-    # outcomes than lineups do within one, so a fixed bar would mostly measure
-    # whether the slate was high-scoring.
-    win_line = field_line(sim, 0.99)
+    # The bar is what it takes to beat *the field*, per outcome — not a quantile
+    # of our own candidates, which is circular and saturates at 1.000 whatever we
+    # do, and not a constant, which mostly measures whether the slate was
+    # high-scoring.
+    field = build_field(pool, spec, n_entries=FIELD_ENTRIES)
+    field_sim = score_lineups(pool, spec, field, universe)
+    win_line = payout_line(field_sim, 0.001)
     chosen = select_portfolio(sim, mode="gpp", line=win_line, n_select=PORTFOLIO)
     selected = candidates[chosen]
 
@@ -290,7 +298,15 @@ def test_selection(benchmark, rung_name: str) -> None:
     benchmark.extra_info["metric"] = "quality"
     benchmark.extra_info["quality"] = {
         "candidates": int(len(candidates)),
+        "field_entries": int(len(field)),
         "optimum": round(optimum, 2),
+        **{
+            f"p_top_{frac:g}_selected": round(
+                float((sim[chosen].max(axis=0) >= payout_line(field_sim, frac)).mean()),
+                4,
+            )
+            for frac in PAYOUT_FRACTIONS
+        },
         **{f"unselected_{k}": v for k, v in before.items()},
         **{f"selected_{k}": v for k, v in after.items()},
     }
@@ -316,8 +332,11 @@ def test_contest_modes_disagree(benchmark, rung_name: str) -> None:
     universe = simulated_universe(pool)
     sim = score_lineups(pool, spec, candidates, universe)
 
-    cash_line = field_line(sim, 0.5)
-    win_line = field_line(sim, 0.99)
+    # Both bars come from the field, not from our own candidates.
+    field = build_field(pool, spec, n_entries=FIELD_ENTRIES)
+    field_sim = score_lineups(pool, spec, field, universe)
+    cash_line = payout_line(field_sim, 0.5)
+    win_line = payout_line(field_sim, 0.001)
     cash_idx = select_portfolio(sim, mode="cash", line=cash_line, n_select=PORTFOLIO)
     gpp_idx = select_portfolio(sim, mode="gpp", line=win_line, n_select=PORTFOLIO)
 
@@ -337,6 +356,7 @@ def test_contest_modes_disagree(benchmark, rung_name: str) -> None:
     benchmark.extra_info["impl"] = "slatekit_rust"
     benchmark.extra_info["metric"] = "quality"
     benchmark.extra_info["quality"] = {
+        "field_entries": int(len(field)),
         "matched_size": int(n),
         "median_cash_line": round(float(np.median(cash_line)), 2),
         "median_win_line": round(float(np.median(win_line)), 2),

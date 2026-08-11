@@ -15,6 +15,8 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
+import numpy as np
+from mlb_dfs_solver import JitterProfile, build_lineups
 from mlb_dfs_solver.pool import PlayerPool
 from mlb_dfs_solver.presets import DK_MLB_CLASSIC
 from mlb_dfs_solver.spec import ConflictRule, GroupConstraint, RosterSpec
@@ -22,16 +24,26 @@ from mlb_dfs_solver.spec import ConflictRule, GroupConstraint, RosterSpec
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-__all__ = ["Rung", "build_ladder", "lineup_overlap", "make_slate", "rung_by_name"]
+__all__ = [
+    "Rung",
+    "build_field",
+    "build_ladder",
+    "lineup_overlap",
+    "make_slate",
+    "payout_line",
+    "rung_by_name",
+]
 
 HITTER_SLOTS = ("C", "SS", "2B", "3B", "1B", "OF")
 
-# Sixteen per position, outfield tripled, so 144 players. Bigger than the slate
-# `bench_build.py` uses, deliberately: at 90 the later rungs stop measuring the
-# cost of a constraint and start measuring a slate that has run out of legal
-# lineups, which is a different and much less interesting number. Real slates are
-# larger still.
-_PER_POSITION = 16
+# Thirty-two per position, outfield tripled, so 288 players — the size of a real
+# DraftKings MLB main slate. Sized up twice, both times because a thin slate was
+# measuring the wrong thing. At 90 players the later constraint rungs ran out of
+# legal lineups. At 144 the candidate pool topped out around 6,000 distinct
+# lineups, which starved selection and made its quality numbers pessimistic: the
+# same measurement at 288 puts the median entry at 0.90 of the optimum rather
+# than 0.83, because there were simply better candidates to choose from.
+_PER_POSITION = 32
 
 
 def make_slate(per_position: int = _PER_POSITION) -> PlayerPool:
@@ -249,3 +261,52 @@ def lineup_overlap(a: Sequence[int], b: Sequence[int]) -> float:
     if not a:
         return 0.0
     return len(set(a) & set(b)) / len(set(a))
+
+
+# A crowd, not a copy of us. Mostly chasing chalk, some semi-sharp, some
+# careless. Real fields are heterogeneous, and a uniform one is the wrong shape:
+# a field built entirely from one profile converged to under 5,000 distinct
+# lineups here, where this mixture reaches six figures.
+CROWD_PROFILES = (
+    JitterProfile(ceiling=(0.1, 0.6), leverage=(0.0, 0.1)),
+    JitterProfile(ceiling=(0.3, 1.2), leverage=(0.1, 0.5)),
+    JitterProfile(ceiling=(0.0, 0.4), leverage=(0.0, 0.0)),
+)
+
+
+def build_field(
+    pool: PlayerPool, spec: RosterSpec, n_entries: int = 200_000, seed: int = 99
+) -> np.ndarray:
+    """Lineups other people entered.
+
+    The single most important thing a contest simulation needs, and the thing
+    that was wrong here longest: measuring our portfolio against a quantile of
+    *our own* candidates is circular. A 99th-percentile bar drawn from our pool
+    is exceeded by 1% of our pool by construction, so covering every outcome is
+    trivial and the resulting "probability we win" was 1.000 no matter what we
+    did — a number that cannot distinguish a good portfolio from a bad one.
+
+    Built with the crowd's profiles rather than ours: no ownership fade, because
+    the field is who creates ownership. Whatever it returns is a stand-in for a
+    real field model, but an independent one, which is the property that matters.
+    """
+    return build_lineups(
+        pool,
+        spec,
+        num_lineups=n_entries,
+        seed=seed,
+        noise=0.45,
+        attempts_per_lineup=4,
+        profiles=list(CROWD_PROFILES),
+    )
+
+
+def payout_line(field_scores: np.ndarray, top_fraction: float) -> np.ndarray:
+    """The score needed to finish in the top `top_fraction` of the field.
+
+    Per outcome, because the bar moves with the slate — see the note on
+    `Objective` in the kernel. `top_fraction=0.001` is a top-heavy tournament
+    where only the first tenth of a percent is worth anything; `0.2` is closer to
+    a double-up.
+    """
+    return np.quantile(field_scores, 1.0 - top_fraction, axis=0).astype(np.float32)
