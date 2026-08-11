@@ -7,6 +7,10 @@ portfolio selection, implemented in Rust.
 > are complete; `0.0.1.dev0` is the placeholder version until the first PyPI
 > release.
 
+New here? [**How it works**](https://kfreisen.github.io/mlb-dfs-solver/concepts/) is the
+background: what the problem actually is, why a solver is the wrong tool for it, and what each
+stage does. The short version follows.
+
 ## The problem
 
 Two different problems, usually conflated:
@@ -32,6 +36,14 @@ wrong. A tournament pays almost nothing outside the extreme tail, so what matter
 that *some* entry reaches a winning score — and two entries winning in the same outcomes are
 wasted on each other. Neither has a diversity penalty: the portfolio objective already gives one
 for free, since a duplicate adds nothing by construction.
+
+```
+build_lineups()          score_lineups()            select_portfolio()
+  what is legal      ->    what might happen    ->    what to enter
+```
+
+You supply the middle one. Simulating a sport well means modelling that sport, and this library
+works for any of them — so it takes the `(players x outcomes)` matrix and does not produce it.
 
 ## What's in it
 
