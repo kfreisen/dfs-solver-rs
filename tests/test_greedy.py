@@ -736,3 +736,39 @@ def test_minimums_compose_with_locks_and_exposure(
         assert 9 in lineup
         assert distinct_teams(tiny_pool, lineup) >= 3
     assert sum(16 in lineup for lineup in lineups.tolist()) <= 9
+
+
+def test_an_expensive_lock_in_a_late_slot_group_is_affordable(
+    mlb_pool: PlayerPool, mlb_spec: RosterSpec
+) -> None:
+    """Locking a star must work as well as locking a scrub.
+
+    The salary reservation used to hold back the *cheapest* eligible player for
+    every slot group still to come. An expensive lock in a late group therefore
+    had its budget spent by the earlier groups and was unaffordable on every
+    attempt: on this slate, locking the dearest pitcher returned 0 lineups of 100
+    while locking the cheapest returned all 100. Reads as the feature being
+    broken, which it was.
+
+    Pitchers fill last in DK_MLB_CLASSIC, so this is the shape that hides it.
+    """
+    pitcher = mlb_spec.mask_for(("P",))
+    pitchers = [i for i in range(len(mlb_pool)) if int(mlb_pool.positions[i]) & pitcher]
+    dearest = max(pitchers, key=lambda i: int(mlb_pool.salaries[i]))
+
+    lineups = build_lineups(mlb_pool, mlb_spec, num_lineups=100, seed=3, locks=[dearest])
+    assert len(lineups) > 50, f"only {len(lineups)} of 100"
+    assert all(dearest in lineup for lineup in lineups.tolist())
+    assert int(mlb_pool.salary_of(lineups, mlb_spec).max()) <= mlb_spec.salary_cap
+
+
+def test_a_locked_player_is_not_offered_as_a_cheap_option_elsewhere(
+    mlb_pool: PlayerPool, mlb_spec: RosterSpec
+) -> None:
+    # A lock cannot fill any other slot, so counting it among a group's cheapest
+    # eligible players understates what the rest of the roster must cost.
+    cheapest = min(range(len(mlb_pool)), key=lambda i: int(mlb_pool.salaries[i]))
+    lineups = build_lineups(mlb_pool, mlb_spec, num_lineups=50, seed=3, locks=[cheapest])
+    assert len(lineups) > 0
+    assert int(mlb_pool.salary_of(lineups, mlb_spec).max()) <= mlb_spec.salary_cap
+    assert int(mlb_pool.salary_of(lineups, mlb_spec).min()) >= mlb_spec.salary_floor

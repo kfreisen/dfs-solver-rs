@@ -272,16 +272,26 @@ def build_lineups_reference(
     #
     # Built from slot-scaled salaries, not raw ones: a captain slot reserving the
     # unmultiplied cheapest player under-reserves by half its cost.
+    #
+    # Locked players are excluded, and their own cost added back. A lock cannot
+    # fill any other slot, and a group holding an expensive lock has a minimum
+    # cost far above its cheapest eligible player — reserve the cheap figure and
+    # the earlier groups spend the budget the lock needed, making it unaffordable
+    # on every attempt.
     cheapest: list[list[int]] = []
     for group_idx, group in enumerate(eligible):
         prefix = [0]
-        for salary in sorted(slot_salaries[group_idx][i] for i in group):
+        for salary in sorted(slot_salaries[group_idx][i] for i in group if i not in is_locked):
             prefix.append(prefix[-1] + salary)
         cheapest.append(prefix)
+    locked_cost = [
+        sum(slot_salaries[j][p] for p in locked_by_slot[j]) for j in range(len(spec.slots))
+    ]
     suffix_cost = [0] * (len(spec.slots) + 1)
     for j in range(len(spec.slots) - 1, -1, -1):
-        take = min(spec.slots[j].count, len(cheapest[j]) - 1)
-        suffix_cost[j] = suffix_cost[j + 1] + cheapest[j][take]
+        free = spec.slots[j].count - len(locked_by_slot[j])
+        take = min(free, len(cheapest[j]) - 1)
+        suffix_cost[j] = suffix_cost[j + 1] + locked_cost[j] + cheapest[j][take]
 
     counted_suffix = _counted_suffix(spec, slot_masks)
     capable = _capable_keys(spec, slot_masks, eligible, keys)
@@ -409,9 +419,12 @@ def _fill(
         # sees the budget they have already spent. A lock that will not fit fails
         # the whole attempt: unlike a greedy pick there is no fallback, and
         # dropping it would silently ignore what the caller insisted on.
+        free_slots = min(slot.count - len(locked_by_slot[group_idx]), len(cheapest[group_idx]) - 1)
+        free_floor = cheapest[group_idx][free_slots]
+        locks_to_come = sum(salaries[p] for p in locked_by_slot[group_idx])
         for player in locked_by_slot[group_idx]:
-            still_needed = min(slot.count - picked - 1, len(cheapest[group_idx]) - 1)
-            remaining = cheapest[group_idx][still_needed] + suffix_cost[group_idx + 1]
+            locks_to_come -= salaries[player]
+            remaining = locks_to_come + free_floor + suffix_cost[group_idx + 1]
             if (
                 salary + salaries[player] + remaining > spec.salary_cap
                 or tally.would_exceed(player, group_idx)

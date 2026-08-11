@@ -356,6 +356,11 @@ pub fn build_lineups(
             });
         }
     }
+    // Membership by player, for the salary reservation below.
+    let mut is_locked_anywhere = vec![false; pool.len()];
+    for &player in &seen_locks {
+        is_locked_anywhere[player as usize] = true;
+    }
     if config.num_lineups == 0 || pool.len() < spec.roster_size() {
         return Ok(Vec::new());
     }
@@ -421,12 +426,24 @@ pub fn build_lineups(
     // Built from slot-scaled salaries, not raw ones: a captain slot reserving the
     // unmultiplied cheapest player under-reserves by half its cost, and the
     // symptom is the last slot being unaffordable on every attempt.
+    // Locked players are excluded from every group's prefix, and their own cost
+    // is added back below. A lock is not available to fill some other slot, so
+    // counting it among the cheap options overstates what is left; and, far worse,
+    // a group holding an expensive lock has a minimum cost far above its cheapest
+    // eligible player. Reserving the cheap figure lets the earlier slot groups
+    // spend the budget the lock needed, and the lock is then unaffordable on every
+    // single attempt — which presents as locking a star returning nothing at all
+    // while locking a cheap player works fine.
     let cheapest: Vec<Vec<i64>> = eligible
         .iter()
         .enumerate()
         .map(|(group_idx, group)| {
             let row = slot_salaries.row(group_idx);
-            let mut salaries: Vec<i64> = group.iter().map(|&i| row[i as usize]).collect();
+            let mut salaries: Vec<i64> = group
+                .iter()
+                .filter(|&&i| !is_locked_anywhere[i as usize])
+                .map(|&i| row[i as usize])
+                .collect();
             salaries.sort_unstable();
             let mut prefix = Vec::with_capacity(salaries.len() + 1);
             prefix.push(0);
@@ -438,9 +455,22 @@ pub fn build_lineups(
             prefix
         })
         .collect();
-    // Least a group can spend filling all of its own slots.
-    let group_floor =
-        |j: usize| -> i64 { cheapest[j][spec.slots[j].count.min(cheapest[j].len() - 1)] };
+    // What the locks in each group cost, as rostered.
+    let locked_cost: Vec<i64> = locked_by_slot
+        .iter()
+        .enumerate()
+        .map(|(group_idx, locks)| {
+            let row = slot_salaries.row(group_idx);
+            locks.iter().map(|&p| row[p as usize]).sum()
+        })
+        .collect();
+    // Least a group can spend filling all of its own slots: its locks, plus the
+    // cheapest unlocked players for whatever slots they leave.
+    let group_floor = |j: usize| -> i64 {
+        let locks = locked_by_slot.get(j).map_or(0, Vec::len);
+        let free = spec.slots[j].count - locks;
+        locked_cost.get(j).copied().unwrap_or(0) + cheapest[j][free.min(cheapest[j].len() - 1)]
+    };
     let mut suffix_cost = vec![0i64; spec.slots.len() + 1];
     for j in (0..spec.slots.len()).rev() {
         suffix_cost[j] = suffix_cost[j + 1] + group_floor(j);
@@ -885,16 +915,23 @@ impl<'a> Builder<'a> {
             // pick there is no alternative to fall back to, and the failure is
             // deterministic — the same lock fails on every attempt — so this
             // surfaces as an empty result rather than a slow one.
-            for &player in if has_locks {
-                &self.locked_by_slot[group_idx][..]
+            let group_locks: &[u32] = if has_locks {
+                &self.locked_by_slot[group_idx]
             } else {
-                &[][..]
-            } {
+                &[]
+            };
+            // What this group's remaining locks and free slots will cost. The
+            // free-slot figure is the cheapest *unlocked* players, which is what
+            // `cheapest` holds.
+            let free_slots = slot.count - group_locks.len();
+            let prefix = &self.cheapest[group_idx];
+            let free_floor = prefix[free_slots.min(prefix.len() - 1)];
+            let mut locks_to_come: i64 = group_locks.iter().map(|&p| salaries[p as usize]).sum();
+
+            for &player in group_locks {
                 let p = player as usize;
-                let still_needed = slot.count - picked - 1;
-                let prefix = &self.cheapest[group_idx];
-                let remaining =
-                    prefix[still_needed.min(prefix.len() - 1)] + self.suffix_cost[group_idx + 1];
+                locks_to_come -= salaries[p];
+                let remaining = locks_to_come + free_floor + self.suffix_cost[group_idx + 1];
                 if salary + salaries[p] + remaining > self.spec.salary_cap
                     || self.tally.would_exceed(p, group_idx)
                     || (has_conflicts && self.blocked[p] != 0)
@@ -2033,6 +2070,56 @@ mod tests {
         // Empty, not a lineup without the lock: a lock the caller cannot have is
         // not quietly dropped.
         assert!(build_lineups(&pool.view(), &spec, &cfg).unwrap().is_empty());
+    }
+
+    #[test]
+    fn an_expensive_lock_in_a_late_slot_group_is_affordable() {
+        // The regression that made locks useless for exactly the players anyone
+        // wants to lock. The salary reservation used to hold back the *cheapest*
+        // eligible player for each upcoming group, so the earlier groups happily
+        // spent the budget an expensive lock in a later group needed, and the
+        // lock was then unaffordable on every attempt. Locking a star returned
+        // nothing while locking a scrub worked, which reads as the feature being
+        // broken rather than the pool being tight.
+        //
+        // Pitchers are the last slot group here and player 15 is the dearest at
+        // 5_100. The cap has to be tight enough for the reservation to bind: the
+        // catcher and outfielders can spend up to 20_200 between them, so at
+        // 23_000 a run that reserved only the cheapest pitcher (3_000) would
+        // routinely leave under 5_100 for the lock. With the lock's own cost
+        // reserved there is always room.
+        let pool = make_pool();
+        let spec = tiny_spec(team_ids(16), 23_000, 0);
+        let mut cfg = config(30);
+        cfg.locks = vec![(15, 2)];
+        // A yield, not merely a non-empty result: the old behaviour still found
+        // the occasional lineup on an attempt that happened to pick cheaply, so
+        // `is_empty` would not have caught this. Measured at 6 of 30 before the
+        // fix and 27 after.
+        let lineups = build_lineups(&pool.view(), &spec, &cfg).unwrap();
+        assert!(
+            lineups.len() >= 20,
+            "only {} of 30 lineups: the reservation is holding back the cheapest \
+             pitcher rather than the locked one",
+            lineups.len()
+        );
+        assert_all_valid(&lineups, &pool.view(), &spec);
+        assert!(lineups.iter().all(|l| l.contains(&15)));
+    }
+
+    #[test]
+    fn a_locked_player_is_not_counted_as_a_cheap_option_elsewhere() {
+        // A lock is unavailable to fill any other slot, so leaving it in the
+        // "cheapest way to finish" prefix understates what the rest of the roster
+        // must cost. Locking the cheapest outfielder must not make the reservation
+        // for the *other* outfield slots any cheaper.
+        let pool = make_pool();
+        let spec = tiny_spec(team_ids(16), 30_000, 0);
+        let mut cfg = config(30);
+        cfg.locks = vec![(4, 1)];
+        let lineups = build_lineups(&pool.view(), &spec, &cfg).unwrap();
+        assert!(!lineups.is_empty());
+        assert_all_valid(&lineups, &pool.view(), &spec);
     }
 
     #[test]
