@@ -43,6 +43,10 @@ the same 150 entries:
 
 <!-- headline -->
 
+Each column is defined precisely in
+[what the columns mean](methodology.md#what-the-columns-mean) — in particular
+"in the money", which has a field model and a per-outcome payout line behind it.
+
 Every individual lineup the solver produced is *better* than ours — its median
 entry is the optimum, because it returned the top 150 by projection. The
 portfolio is worse. Per-lineup quality and portfolio quality are close to

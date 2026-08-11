@@ -188,7 +188,12 @@ def render() -> str:
             "[How benchmarks work](methodology.md).\n"
         )
 
-    lines: list[str] = []
+    lines: list[str] = [
+        "Every column is defined in "
+        "[what the columns mean](methodology.md#what-the-columns-mean) — "
+        "several read as more, or less, impressive than they are.",
+        "",
+    ]
     for result in results:
         lines += render_result(result)
     lines += [
