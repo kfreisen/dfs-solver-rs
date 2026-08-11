@@ -284,7 +284,10 @@ def update_readme(report: dict[str, Any]) -> bool:
         return False
     head, _, rest = text.partition(README_BEGIN)
     _, _, tail = rest.partition(README_END)
-    updated = head + readme_summary(report).removesuffix("\n") + tail.lstrip("\n")
+    # Exactly one blank line after the closing marker, however many the previous
+    # version had: markdown needs the break or the next paragraph joins the marker.
+    body = readme_summary(report).removesuffix("\n")
+    updated = head + body + "\n\n" + tail.lstrip("\n")
     if updated == text:
         return False
     path.write_text(updated, encoding="utf-8")
