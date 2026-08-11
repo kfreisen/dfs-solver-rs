@@ -207,8 +207,11 @@ def test_selection_beats_taking_the_top_by_mean(
     at the thing that pays, because it buys the same outcomes repeatedly.
     """
     sim = score_lineups(tiny_pool, tiny_spec, candidates, universe)
-    chosen = select_portfolio(sim, mode="excess", line=0.0, n_select=30)
-    naive = np.argsort(-sim.mean(axis=1))[:30]
+    # Well under the candidate count, or both approaches take everything and the
+    # comparison is between two identical sets.
+    take = max(2, len(sim) // 4)
+    chosen = select_portfolio(sim, mode="excess", line=0.0, n_select=take)
+    naive = np.argsort(-sim.mean(axis=1))[:take]
     assert portfolio_value(sim, chosen) > portfolio_value(sim, naive)
 
 

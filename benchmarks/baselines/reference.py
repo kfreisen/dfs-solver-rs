@@ -159,6 +159,7 @@ def build_lineups_reference(
     noise: float = 0.35,
     attempts_per_lineup: int = 3,
     profiles: Sequence[tuple[tuple[float, float], tuple[float, float]]] | None = None,
+    value_weight: float = 0.75,
     extra_conflict_pairs: Sequence[tuple[int, int]] | None = None,
     locks: Sequence[int] | Mapping[int, str | None] | None = None,
     max_exposure: float | Mapping[int, float] | None = None,
@@ -178,6 +179,8 @@ def build_lineups_reference(
         attempts_per_lineup: Attempts per requested lineup before giving up.
         profiles: `((ceiling_low, ceiling_high), (leverage_low, leverage_high))`
             pairs, cycled across attempts. Defaults to the contrarian/standard pair.
+        value_weight: How strongly to price salary into a player's value, as a
+            multiple of the pool's points-per-dollar rate. Mirrors the kernel.
         extra_conflict_pairs: Pool-index pairs forbidden from sharing a lineup, on
             top of whatever `spec.conflicts` resolves to. Mirrors the kernel's
             `conflict_pairs` argument.
@@ -214,7 +217,12 @@ def build_lineups_reference(
         )
         limits = {p: floor(f * num_lineups) for p, f in fractions.items()}
 
-    projections = pool.projections.tolist()
+    # Salary priced into every projection, once. The pool's own points-per-dollar
+    # rate makes the weight unitless. Only the *ordering* reads this; a finished
+    # lineup is still worth the sum of the real projections.
+    total_salary = float(pool.salaries.sum())
+    rate = float(pool.projections.sum()) / total_salary if total_salary > 0 else 0.0
+    projections = (pool.projections - value_weight * rate * pool.salaries).tolist()
     stddevs = pool.stddevs.tolist()
     salaries = pool.salaries.tolist()
     ownership = pool.ownership.tolist()

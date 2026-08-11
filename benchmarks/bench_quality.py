@@ -61,9 +61,14 @@ pytestmark = pytest.mark.filterwarnings("ignore::DeprecationWarning:pulp.*")
 # does not.
 QUALITY_RUNGS = ["floor", "stack"]
 PORTFOLIO = 150
-# How many lineups the solver is asked for. Each is a fresh solve with one more
-# no-good cut, so this is the practical ceiling rather than a chosen sample size.
-SOLVER_PORTFOLIO = 10
+# The solver is asked for the same number we enter. It used to be asked for ten,
+# on the belief that a full portfolio was impractically slow — a belief that came
+# from a degenerate slate, see `bench_build.py`. Matching the counts matters for
+# more than fairness: selection orders entries by marginal contribution, so the
+# first ten are the shared core and comparing only those hides the diversity that
+# appears across a real portfolio (0.60 against 0.58 at ten entries; 0.36 against
+# 0.55 at a hundred and fifty).
+SOLVER_PORTFOLIO = PORTFOLIO
 REFERENCE_POPULATION = 2_000
 # How many candidates selection gets to choose from. Generation is cheap and
 # selection is the point: the ratio is what the table below measures.
@@ -151,10 +156,9 @@ def test_quality(benchmark, rung_name: str) -> None:
     )
     identical = sum(1 for a in ours_lists if any(set(a) == set(b) for b in solver_portfolio))
 
-    # Overlap is compared at matched portfolio size. A hundred and fifty lineups
-    # have more chances to resemble each other than ten do, so reading the two
-    # self-overlap figures against each other at different sizes would flatter
-    # whichever portfolio was smaller — here, always the solver's.
+    # Still truncated to a common length, because tournament mode can return
+    # fewer entries than asked for and a mean over 150 against a mean over 40
+    # compares portfolio sizes rather than objectives.
     matched = min(len(ours_lists), len(solver_portfolio))
     ours_matched = mean_pairwise_overlap(ours_lists[:matched])
     solver_matched = mean_pairwise_overlap(solver_portfolio[:matched])

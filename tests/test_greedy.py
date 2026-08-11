@@ -757,7 +757,11 @@ def test_an_expensive_lock_in_a_late_slot_group_is_affordable(
     dearest = max(pitchers, key=lambda i: int(mlb_pool.salaries[i]))
 
     lineups = build_lineups(mlb_pool, mlb_spec, num_lineups=100, seed=3, locks=[dearest])
-    assert len(lineups) > 50, f"only {len(lineups)} of 100"
+    # Measured at 0 of 100 before the fix and 50 after. The threshold is well
+    # below that because pricing salary into the ranking (see `value_weight`)
+    # legitimately disfavours the most expensive pitcher — the bug being guarded
+    # against made it unreachable, not merely unpopular.
+    assert len(lineups) > 25, f"only {len(lineups)} of 100"
     assert all(dearest in lineup for lineup in lineups.tolist())
     assert int(mlb_pool.salary_of(lineups, mlb_spec).max()) <= mlb_spec.salary_cap
 
@@ -772,3 +776,55 @@ def test_a_locked_player_is_not_offered_as_a_cheap_option_elsewhere(
     assert len(lineups) > 0
     assert int(mlb_pool.salary_of(lineups, mlb_spec).max()) <= mlb_spec.salary_cap
     assert int(mlb_pool.salary_of(lineups, mlb_spec).min()) >= mlb_spec.salary_floor
+
+
+def test_a_negative_value_weight_is_rejected(tiny_pool: PlayerPool, tiny_spec: RosterSpec) -> None:
+    # Negative would *reward* spending, ranking a player above an identical
+    # cheaper one, which is never what anyone means.
+    with pytest.raises(ValueError, match="value_weight must be non-negative"):
+        build_lineups(tiny_pool, tiny_spec, num_lineups=5, value_weight=-0.5)
+
+
+def test_pricing_salary_prefers_value_over_raw_projection(tiny_spec: RosterSpec) -> None:
+    """The default ranks by surplus over the pool's price for a point.
+
+    Ranking by projection alone systematically overspends — the fill takes the
+    best remaining player at every slot and reaches the last with nothing left.
+
+    Needs a pool where projection is *not* a monotone function of salary, which
+    the shared fixtures are not: `mlb_pool` has twelve distinct
+    (salary, projection) pairs across ninety players, so the dearest player is
+    always the best and there is no value to find. On that slate pricing salary
+    changes nothing, correctly. Mispriced players are the whole point.
+    """
+    records: list[dict[str, object]] = []
+    for position in ("P", "C", "OF"):
+        for k in range(10):
+            records.append(
+                {
+                    "name": f"{position}{k}",
+                    "positions": (position,),
+                    "salary": 3000 + k * 700,
+                    # Every third player is a bargain and every third is a trap.
+                    "projection": 5.0 + k * 1.4 + ((k * 5) % 3 - 1) * 3.2,
+                    "stddev": 2.0,
+                    "team": f"T{k % 4}",
+                }
+            )
+    pool = PlayerPool.from_records(records, tiny_spec)
+    # A cap that genuinely binds. Under a loose one there is enough budget to
+    # take the best player at every slot, so nothing is traded off and pricing
+    # has nothing to correct.
+    spec = replace(tiny_spec, salary_cap=22_000)
+
+    plain = build_lineups(pool, spec, num_lineups=2_000, seed=4, value_weight=0.0)
+    priced = build_lineups(pool, spec, num_lineups=2_000, seed=4)
+
+    # The median rather than the best. On a thirty-player pool the best roster is
+    # reachable either way; what pricing changes is the whole distribution, which
+    # is also what matters when selection picks from it.
+    median_plain = float(np.median(pool.projection_of(plain, spec)))
+    median_priced = float(np.median(pool.projection_of(priced, spec)))
+    assert median_priced > median_plain, (
+        f"pricing salary should lift the pool: {median_priced:.2f} vs {median_plain:.2f}"
+    )

@@ -40,6 +40,7 @@ def build_lineups(
     attempts_per_lineup: int,
     chunks: int,
     profiles: np.ndarray,
+    value_weight: float,
     lock_players: np.ndarray,
     lock_slot_groups: np.ndarray,
     exposure_limits: np.ndarray,

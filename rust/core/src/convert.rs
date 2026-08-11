@@ -243,6 +243,8 @@ pub struct ConfigArrays<'a> {
     pub chunks: usize,
     /// Flattened `(n, 4)` matrix: ceiling low/high then leverage low/high.
     pub profiles: &'a [f64],
+    /// How strongly to price salary into a player's value.
+    pub value_weight: f64,
     /// Player index of each lock, parallel to `lock_slot_groups`.
     pub lock_players: &'a [u32],
     /// Slot group each lock is assigned to.
@@ -270,6 +272,7 @@ pub fn config_from_arrays(arrays: ConfigArrays<'_>) -> Result<GreedyConfig, Conv
         noise: arrays.noise,
         attempts_per_lineup: arrays.attempts_per_lineup,
         chunks: arrays.chunks,
+        value_weight: arrays.value_weight,
         profiles: arrays
             .profiles
             .chunks(4)
@@ -476,6 +479,7 @@ mod tests {
             attempts_per_lineup: 3,
             chunks: 8,
             profiles,
+            value_weight: 0.75,
             lock_players: &[],
             lock_slot_groups: &[],
             exposure_limits: &[],

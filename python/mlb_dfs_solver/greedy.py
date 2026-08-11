@@ -366,6 +366,7 @@ def build_lineups(
     attempts_per_lineup: int = 3,
     chunks: int = 64,
     profiles: Sequence[JitterProfile] | None = None,
+    value_weight: float = 0.75,
     conflict_pairs: Sequence[tuple[int, int]] | np.ndarray | None = None,
     locks: Sequence[int] | Mapping[int, str | None] | None = None,
     max_exposure: float | Mapping[int, float] | None = None,
@@ -388,6 +389,30 @@ def build_lineups(
             the output.
         profiles: Jitter profiles cycled across attempts. Defaults to
             `(CONTRARIAN, STANDARD)`.
+        value_weight: How strongly to price salary into a player's value, as a
+            multiple of the pool's own points-per-dollar rate.
+
+            Zero ranks by projection alone, which systematically overspends: the
+            fill takes the best remaining player at each slot and reaches the
+            last ones with no money left. Measured, that capped the best
+            candidate at 0.93 of the proven optimum however large the pool grew.
+            At `1.0` a player is ranked by their surplus over what a point costs
+            on average, which found the exact optimum on the slate it was tested
+            against.
+
+            The default stops short of 1.0 because just past it there is a cliff
+            — at 1.25 the candidate pool collapsed from fifteen thousand distinct
+            lineups to five hundred, every attempt converging on the same cheap
+            players. Between 0.75 and 1.0 quality is flat.
+
+            Pricing narrows the pool even at the default, because a sharper
+            objective makes attempts agree more often. That is a real cost and it
+            was worth paying: on the benchmark slate the pool fell from twenty
+            thousand distinct lineups to fifteen while every quality measure
+            improved, portfolio diversity included.
+
+            This changes only the *ordering*. A lineup is still worth the sum of
+            its players' real projections.
         conflict_pairs: Extra `(i, j)` pool-index pairs forbidden from sharing a
             lineup, on top of anything `spec.conflicts` resolves to. Index pairs
             live here rather than on the specification because they are a fact
@@ -447,6 +472,9 @@ def build_lineups(
     if noise < 0:
         msg = f"noise must be non-negative, got {noise}"
         raise ValueError(msg)
+    if value_weight < 0:
+        msg = f"value_weight must be non-negative, got {value_weight}"
+        raise ValueError(msg)
 
     selected = tuple(profiles) if profiles is not None else _DEFAULT_PROFILES
     if not selected:
@@ -502,6 +530,7 @@ def build_lineups(
         int(attempts_per_lineup),
         int(chunks),
         encoded.profiles,
+        float(value_weight),
         np.asarray([p for p, _ in assigned], dtype=np.uint32) if assigned else _NO_LOCK_PLAYERS,
         np.asarray([g for _, g in assigned], dtype=np.uint64) if assigned else _NO_LOCK_SLOTS,
         limits,

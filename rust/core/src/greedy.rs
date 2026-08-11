@@ -155,6 +155,28 @@ pub struct GreedyConfig {
     pub chunks: usize,
     /// Profiles cycled across attempts.
     pub profiles: Vec<JitterProfile>,
+    /// How strongly to price salary into a player's value, as a multiple of the
+    /// pool's own points-per-dollar rate.
+    ///
+    /// Zero ranks players by projection alone, which is what this did
+    /// originally and which systematically overspends: the greedy takes the
+    /// best remaining player at every slot and arrives at the cheap ones with
+    /// no money left. Measured, its best candidate reached 0.93 of the proven
+    /// optimum however large the pool grew, and the rosters it liked used
+    /// players at points-per-dollar rank 62 of 288 where the optimal roster
+    /// used rank 20.
+    ///
+    /// At 1.0 a player is ranked by their surplus over what the pool charges
+    /// for a point on average — the Lagrangian view of the salary constraint,
+    /// with the shadow price approximated by that rate. That found the exact
+    /// optimum on the slate it was measured against.
+    ///
+    /// The default is deliberately short of it. Quality is flat between 0.75
+    /// and 1.0 across every constraint rung tested (0.981-0.982 of optimum),
+    /// and just above there is a cliff: at 1.25 the pool collapsed from fifteen
+    /// thousand distinct lineups to five hundred, because once cheap players
+    /// dominate outright every attempt converges on the same ones.
+    pub value_weight: f64,
     /// Players forced into every lineup, each already assigned to the slot group
     /// that will hold it: `(player, slot_group)`.
     ///
@@ -183,6 +205,7 @@ impl Default for GreedyConfig {
             attempts_per_lineup: 3,
             chunks: 64,
             profiles: vec![JitterProfile::CONTRARIAN, JitterProfile::STANDARD],
+            value_weight: 0.75,
             locks: Vec::new(),
             exposure_limits: Vec::new(),
         }
@@ -526,6 +549,22 @@ pub fn build_lineups(
         return Ok(Vec::new());
     }
 
+    // Salary priced into every projection, once. The rate is the pool's own
+    // points per dollar, so `value_weight` is unitless and means the same thing
+    // on a $50,000 cap as on a $60,000 one.
+    let total_salary: i64 = pool.salaries.iter().sum();
+    let rate = if total_salary > 0 {
+        pool.projections.iter().sum::<f64>() / total_salary as f64
+    } else {
+        0.0
+    };
+    let value: Vec<f64> = pool
+        .projections
+        .iter()
+        .zip(pool.salaries)
+        .map(|(&projection, &salary)| projection - config.value_weight * rate * salary as f64)
+        .collect();
+
     let tables = Tables {
         eligible: &eligible,
         cheapest: &cheapest,
@@ -533,6 +572,7 @@ pub fn build_lineups(
         slot_salaries,
         counted_suffix: &counted_suffix,
         capable_keys: &capable_keys,
+        value: &value,
         locked_by_slot: &locked_by_slot,
     };
 
@@ -630,6 +670,8 @@ struct Tables<'a> {
     counted_suffix: &'a [usize],
     /// Key values each stack constraint could be built around.
     capable_keys: &'a [Vec<i32>],
+    /// Projections with salary priced in.
+    value: &'a [f64],
     /// Players forced into each slot group.
     locked_by_slot: &'a [Vec<u32>],
 }
@@ -656,6 +698,10 @@ struct Builder<'a> {
     /// Redrawn per attempt, which is what spreads a portfolio's stacks across
     /// teams instead of piling every lineup onto the same one.
     stack_targets: Vec<i32>,
+    /// Projections with salary priced in, which is what the candidate ordering
+    /// reads. The pool's own projections stay untouched, because those are what
+    /// a finished lineup is reported as being worth.
+    value: &'a [f64],
     /// Players forced into each slot group, bucketed by that group.
     locked_by_slot: &'a [Vec<u32>],
     /// Whether each player is locked, by pool index. Repair consults this to
@@ -687,6 +733,7 @@ impl<'a> Builder<'a> {
             slot_salaries,
             counted_suffix,
             capable_keys,
+            value,
             locked_by_slot,
         } = tables;
         let n = pool.len();
@@ -709,6 +756,7 @@ impl<'a> Builder<'a> {
             slot_salaries,
             counted_suffix,
             capable_keys,
+            value,
             stack_targets: vec![-1; spec.groups.len()],
             locked_by_slot,
             is_locked,
@@ -740,7 +788,10 @@ impl<'a> Builder<'a> {
         let leverage = sample_range(rng, profile.leverage);
 
         for i in 0..self.pool.len() {
-            let projection = self.pool.projections[i];
+            // The salary-priced projection, not the raw one — including for the
+            // noise amplitude, so a player the pricing has written off does not
+            // also get the largest random kick.
+            let projection = self.value[i];
             let mut value = projection + ceiling * self.pool.stddevs[i];
             // Clamped below 1 so a 100%-owned player is faded, not zeroed.
             let owned = self.pool.ownership[i].clamp(0.0, 0.99);
@@ -1744,6 +1795,88 @@ mod tests {
                 SpecError::ConflictGraphLengthMismatch { .. }
             ))
         ));
+    }
+
+    // --- Pricing salary into value ----------------------------------------
+
+    #[test]
+    fn pricing_salary_prefers_the_cheaper_of_two_equal_players() {
+        // Two catchers projected the same, one costing far more. Ranked by
+        // projection alone they tie and index decides; priced against the pool's
+        // rate the cheaper one wins outright, which is the entire correction.
+        let mut pool = make_pool();
+        pool.projections[0] = 8.0;
+        pool.projections[1] = 8.0;
+        pool.salaries[0] = 3_000;
+        pool.salaries[1] = 6_000;
+        let spec = tiny_spec(team_ids(16), 30_000, 0);
+
+        let mut priced = config(1);
+        priced.noise = 0.0;
+        priced.value_weight = 1.0;
+        let lineups = build_lineups(&pool.view(), &spec, &priced).unwrap();
+        assert!(
+            lineups.iter().all(|l| l[0] == 0),
+            "the dearer of two equal catchers was preferred"
+        );
+    }
+
+    #[test]
+    fn a_zero_weight_ranks_by_projection_alone() {
+        // The old behaviour, still reachable. A caller who wants raw projection
+        // ordering — or who is reproducing a result from before this existed —
+        // gets exactly it.
+        let mut pool = make_pool();
+        pool.projections[0] = 8.0;
+        pool.projections[1] = 8.5;
+        pool.salaries[0] = 3_000;
+        pool.salaries[1] = 9_000;
+        let spec = tiny_spec(team_ids(16), 30_000, 0);
+
+        let mut plain = config(1);
+        plain.noise = 0.0;
+        plain.value_weight = 0.0;
+        let lineups = build_lineups(&pool.view(), &spec, &plain).unwrap();
+        assert!(
+            lineups.iter().all(|l| l[0] == 1),
+            "with salary unpriced the higher projection should win regardless of cost"
+        );
+    }
+
+    #[test]
+    fn pricing_does_not_change_what_a_lineup_is_reported_as_worth() {
+        // The adjustment is a ranking device. A lineup's value is still the sum
+        // of its players' real projections, or every number downstream — the
+        // benchmark ratios, the simulated scores — would be quietly deflated.
+        let pool = make_pool();
+        let spec = tiny_spec(team_ids(16), 30_000, 0);
+        let mut cfg = config(5);
+        cfg.value_weight = 1.0;
+        let lineups = build_lineups(&pool.view(), &spec, &cfg).unwrap();
+        let lineup = &lineups[0];
+        let expected: f64 = lineup.iter().map(|&i| pool.projections[i as usize]).sum();
+        assert!((lineup_projection(&pool.view(), &spec, lineup) - expected).abs() < 1e-9);
+    }
+
+    #[test]
+    fn pricing_salary_is_scale_free() {
+        // The weight multiplies the pool's own points-per-dollar rate, so the
+        // same number means the same thing whatever the currency. Doubling every
+        // salary must not change the ordering.
+        let pool = make_pool();
+        let mut doubled = make_pool();
+        for salary in doubled.salaries.iter_mut() {
+            *salary *= 2;
+        }
+        let spec = tiny_spec(team_ids(16), 30_000, 0);
+        let doubled_spec = tiny_spec(team_ids(16), 60_000, 0);
+        let mut cfg = config(20);
+        cfg.value_weight = 1.0;
+
+        assert_eq!(
+            build_lineups(&pool.view(), &spec, &cfg).unwrap(),
+            build_lineups(&doubled.view(), &doubled_spec, &cfg).unwrap()
+        );
     }
 
     // --- Minimums ---------------------------------------------------------
