@@ -51,8 +51,80 @@ def group_by_case(cases: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]
     return grouped
 
 
+def render_timing_case(case_name: str, measurements: list[dict[str, Any]]) -> list[str]:
+    """Render one case as a table ranked fastest first."""
+    ranked = sorted(measurements, key=lambda m: m["median"])
+    best = ranked[0]
+    metric = best.get("metric", "seconds")
+    unit = "s" if metric == "seconds" else ""
+    # Yield is only meaningful where a benchmark recorded it, and only worth a
+    # column where something actually fell short: a table of 1.00 teaches nothing.
+    show_yield = any(m.get("params", {}).get("yield", 1.0) < 1.0 for m in measurements)
+
+    detail = next((m["detail"] for m in measurements if m.get("detail")), "")
+    lines = [f"**{case_name}**" + (f" — {detail}" if detail else ""), ""]
+
+    header = f"| Implementation | Median ({metric}) | Relative |"
+    divider = "| --- | ---: | ---: |"
+    if show_yield:
+        header += " Lineups returned |"
+        divider += " ---: |"
+    lines += [header, divider]
+
+    for m in ranked:
+        if m is best:
+            relative = "fastest"
+        elif best["median"]:
+            # multiplication sign is the intended typography in the table.
+            relative = f"{m['median'] / best['median']:.1f}× slower"  # noqa: RUF001
+        else:
+            relative = "—"
+        row = f"| `{m['impl']}` | {m['median']:.6f}{unit} | {relative} |"
+        if show_yield:
+            params = m.get("params", {})
+            produced = params.get("produced")
+            requested = params.get("requested")
+            row += (
+                f" {produced} of {requested} |"
+                if produced is not None and requested is not None
+                else " — |"
+            )
+        lines.append(row)
+    lines.append("")
+
+    if len(measurements) == 1:
+        lines += [
+            "!!! warning",
+            "    Only one implementation was measured for this case, so there is "
+            "no baseline to compare against.",
+            "",
+        ]
+    return lines
+
+
+def render_quality_case(case_name: str, measurements: list[dict[str, Any]]) -> list[str]:
+    """Render a case that measured goodness rather than time.
+
+    Kept apart from the timing tables and rendered as plain key/value rows,
+    because these are not comparable to each other and ranking them by the
+    stopwatch would be meaningless — the benchmark times a no-op.
+    """
+    lines: list[str] = []
+    for m in measurements:
+        detail = f" — {m['detail']}" if m.get("detail") else ""
+        lines += [
+            f"**{case_name}**{detail}",
+            "",
+            "| Measure | Value |",
+            "| --- | ---: |",
+        ]
+        lines += [f"| `{k}` | {v} |" for k, v in m.get("quality", {}).items()]
+        lines.append("")
+    return lines
+
+
 def render_result(result: dict[str, Any]) -> list[str]:
-    """Render one machine's results as a heading plus a table per unit of measure."""
+    """Render one machine's results as a heading plus a table per case."""
     hw = result["hardware"]
     ram = f", {hw['ram_gb']} GB RAM" if hw.get("ram_gb") else ""
     lines = [
@@ -65,36 +137,25 @@ def render_result(result: dict[str, Any]) -> list[str]:
         "",
     ]
 
-    for case_name, measurements in group_by_case(result["cases"]).items():
-        ranked = sorted(measurements, key=lambda m: m["median"])
-        best = ranked[0]
-        metric = best.get("metric", "seconds")
-        unit = "s" if metric == "seconds" else ""
+    grouped = group_by_case(result["cases"])
+    timing = {k: v for k, v in grouped.items() if v[0].get("metric", "seconds") == "seconds"}
+    quality = {k: v for k, v in grouped.items() if v[0].get("metric", "seconds") != "seconds"}
 
+    for case_name, measurements in timing.items():
+        lines += render_timing_case(case_name, measurements)
+
+    if quality:
         lines += [
-            f"**{case_name}**",
+            "#### Quality",
             "",
-            f"| Implementation | Median ({metric}) | Relative |",
-            "| --- | ---: | ---: |",
+            "Speed on its own would be misleading: a generator of a hundred and fifty "
+            "near-identical lineups is worthless for a large-field contest, and so is "
+            "one that returns diverse rubbish. These are the numbers that say which "
+            "this is.",
+            "",
         ]
-        for m in ranked:
-            if m is best:
-                relative = "fastest"
-            elif best["median"]:
-                # multiplication sign is the intended typography in the table.
-                relative = f"{m['median'] / best['median']:.1f}× slower"  # noqa: RUF001
-            else:
-                relative = "—"
-            lines.append(f"| `{m['impl']}` | {m['median']:.6f}{unit} | {relative} |")
-        lines.append("")
-
-        if len(measurements) == 1:
-            lines += [
-                "!!! warning",
-                "    Only one implementation was measured for this case, so there is "
-                "no baseline to compare against.",
-                "",
-            ]
+        for case_name, measurements in quality.items():
+            lines += render_quality_case(case_name, measurements)
 
     return lines
 
@@ -117,7 +178,7 @@ def render() -> str:
         "Reproduce with:",
         "",
         "```bash",
-        "make bench",
+        "task bench",
         "```",
         "",
     ]

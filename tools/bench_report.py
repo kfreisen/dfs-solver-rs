@@ -186,6 +186,111 @@ def speedup_table(cases: list[dict[str, Any]], fastest_impl: str | None) -> list
     return lines
 
 
+README_BEGIN = "<!-- begin:benchmark-summary -->"
+README_END = "<!-- end:benchmark-summary -->"
+
+
+def readme_summary(report: dict[str, Any]) -> str:
+    """Render the headline tables for the README.
+
+    The docs site renders the full results from the committed JSON at build time,
+    which the README cannot do — GitHub and PyPI run no hooks. So the summary is
+    *generated into* the README between markers rather than typed, and `task bench`
+    rewrites it. The rule the rest of this repository follows still holds: nobody
+    types a number into a document, so no document can disagree with the data.
+
+    Deliberately short. It is the first thing a reader sees, and the full ladder,
+    every rung and every implementation belongs on the benchmarks page.
+    """
+    hw = report["hardware"]
+    lines = [
+        README_BEGIN,
+        "",
+        f"{hw['cpu']}, {hw['cores']} cores · {hw['os']} · measured "
+        f"{report['timestamp'][:10]} against `{report['git_sha']}`.",
+        "",
+    ]
+
+    ladder = [c for c in report["cases"] if c["name"].startswith("constraints/")]
+    if ladder:
+        by_case: dict[str, dict[str, dict[str, Any]]] = {}
+        for case in ladder:
+            by_case.setdefault(case["name"], {})[case["impl"]] = case
+        lines += [
+            "**Cost of each constraint.** Every implementation asked for the same "
+            "portfolio on the same slate, one constraint added per row.",
+            "",
+            "| Constraint | This | Pure Python | CP-SAT | Speedup | Returned |",
+            "| --- | ---: | ---: | ---: | ---: | ---: |",
+        ]
+        for name, impls in by_case.items():
+            ours = impls.get("slatekit_rust")
+            if ours is None:
+                continue
+            python = impls.get("reference_python")
+            solver = impls.get("milp_ortools_cpsat")
+            params = ours.get("params", {})
+
+            detail = ours.get("detail", name.split("/", 1)[-1])
+            ours_ms = f"{ours['median'] * 1e3:.2f} ms"
+            python_ms = f"{python['median'] * 1e3:.1f} ms" if python else "—"
+            solver_ms = f"{solver['median'] * 1e3:,.0f} ms" if solver else "—"
+            speedup = (
+                f"{solver['median'] / ours['median']:,.0f}×"  # noqa: RUF001
+                if solver and ours["median"]
+                else "—"
+            )
+            returned = f"{params.get('produced', '—')} of {params.get('requested', '—')}"
+            lines.append(
+                f"| {detail} | {ours_ms} | {python_ms} | {solver_ms} | {speedup} | {returned} |"
+            )
+        lines.append("")
+
+    quality = [c for c in report["cases"] if c["name"].startswith("quality/") and c.get("quality")]
+    rows = [(c, c["quality"]) for c in quality if "median_ratio" in c["quality"]]
+    if rows:
+        lines += [
+            "**Are they any good, and are they different?** Scored against the "
+            "optimum CP-SAT proves, and compared with the solver's own portfolio at "
+            "matched size.",
+            "",
+            "| Slate | Best vs optimum | Median vs optimum | Overlap within | "
+            "Solver's overlap | Shared with solver | Identical |",
+            "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+        ]
+        for case, q in rows:
+            lines.append(
+                f"| {case.get('detail', case['name'])} | {q['best_ratio']:.0%} | "
+                f"{q['median_ratio']:.0%} | {q['self_overlap_matched']:.0%} | "
+                f"{q['solver_self_overlap']:.0%} | {q['overlap_with_solver']:.0%} | "
+                f"{q['identical_to_solver']} |"
+            )
+        lines += ["", README_END, ""]
+    else:
+        lines += [README_END, ""]
+    return "\n".join(lines)
+
+
+def update_readme(report: dict[str, Any]) -> bool:
+    """Splice the generated summary into README.md. Returns whether it changed."""
+    path = REPO_ROOT / "README.md"
+    text = path.read_text(encoding="utf-8")
+    if README_BEGIN not in text or README_END not in text:
+        print(
+            f"warning: README.md has no {README_BEGIN} / {README_END} markers, so the "
+            f"summary was not written.",
+            file=sys.stderr,
+        )
+        return False
+    head, _, rest = text.partition(README_BEGIN)
+    _, _, tail = rest.partition(README_END)
+    updated = head + readme_summary(report).removesuffix("\n") + tail.lstrip("\n")
+    if updated == text:
+        return False
+    path.write_text(updated, encoding="utf-8")
+    return True
+
+
 def main() -> int:
     """Convert a pytest-benchmark dump and optionally commit it under benchmarks/results/."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -231,6 +336,9 @@ def main() -> int:
     out_path = out_dir / f"{date}-{report['git_sha']}.json"
     out_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(f"\nwrote {out_path.relative_to(REPO_ROOT)}", file=sys.stderr)
+
+    if update_readme(report):
+        print("updated README.md benchmark summary", file=sys.stderr)
 
     if "-dirty" in report["git_sha"]:
         print(
