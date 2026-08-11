@@ -23,9 +23,15 @@ Two different problems, usually conflated:
 
 For (2), asking an ILP for 150 solutions is both slow and the wrong objective. `mlb_dfs_solver`
 generates a large randomized-greedy candidate pool and then selects from it by **lazy-greedy
-submodular maximization** — Minoux's lazy evaluation, stochastic greedy for large pools, and a
-CVaR-upside objective that scores a lineup by how much it improves the portfolio's *tail*, not
-its mean.
+submodular maximization** (Minoux), scoring each candidate by what it adds to the portfolio
+rather than by its own merit.
+
+Cash games and tournaments get different objectives, because they want different things. A cash
+game pays a flat amount for beating a line, so entries are judged alone and diversity is actively
+wrong. A tournament pays almost nothing outside the extreme tail, so what matters is the chance
+that *some* entry reaches a winning score — and two entries winning in the same outcomes are
+wasted on each other. Neither has a diversity penalty: the portfolio objective already gives one
+for free, since a duplicate adds nothing by construction.
 
 ## What's in it
 
@@ -41,8 +47,9 @@ its mean.
   per-player exposure caps across the portfolio.
 - Stacking, with the stacked team drawn per attempt so a portfolio spreads across teams instead
   of piling onto one.
-- Lazy-greedy submodular selection with a CVaR-upside objective, ownership/leverage discounting,
-  and a diversity penalty.
+- Lazy-greedy submodular portfolio selection over simulated outcomes, in cash and tournament
+  modes. You supply the simulation — a `(players x outcomes)` matrix — because a library that
+  also works for hockey has no business modelling how baseball scores.
 - Sport presets (`mlb_dfs_solver.presets`) shipped as data, not hardcoded branches.
 - Runtime AVX2 dispatch. Wheels are built portably; `mlb_dfs_solver.active_isa()` reports which path
   your machine took.

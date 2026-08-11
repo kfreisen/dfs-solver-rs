@@ -43,7 +43,14 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from baselines.milp import solve_milp_ortools, solve_portfolio_ortools
-from mlb_dfs_solver import CONTRARIAN, JitterProfile, build_lineups
+from mlb_dfs_solver import (
+    CONTRARIAN,
+    JitterProfile,
+    build_lineups,
+    score_lineups,
+    select_portfolio,
+    tail_line,
+)
 from mlb_dfs_solver.pool import PlayerPool
 from mlb_dfs_solver.spec import RosterSpec
 from slates import lineup_overlap, make_slate, rung_by_name
@@ -59,6 +66,10 @@ PORTFOLIO = 150
 # no-good cut, so this is the practical ceiling rather than a chosen sample size.
 SOLVER_PORTFOLIO = 10
 REFERENCE_POPULATION = 2_000
+# How many candidates selection gets to choose from. Generation is cheap and
+# selection is the point: the ratio is what the table below measures.
+CANDIDATES = 20_000
+SIMULATIONS = 1_500
 
 
 def random_population(pool: PlayerPool, spec: RosterSpec, **kwargs: object) -> np.ndarray:
@@ -209,3 +220,129 @@ def test_contrarian_profile_shifts_ownership(benchmark) -> None:
     }
     benchmark.pedantic(lambda: None, rounds=1, iterations=1)
     assert mean_ownership(contrarian) < mean_ownership(standard)
+
+
+def simulated_universe(pool: PlayerPool, seed: int = 7) -> np.ndarray:
+    """Correlated player outcomes, standing in for a real simulator.
+
+    A team-level shock plus idiosyncratic noise. Crude next to a copula fit on
+    real distributions, and deliberately so — this library does not simulate, and
+    a benchmark that shipped a serious simulator would be testing the simulator.
+    What it needs is a matrix with *some* correlation structure, so that lineups
+    sharing a stack move together and coverage means something.
+    """
+    rng = np.random.default_rng(seed)
+    teams = pool.keys["team"]
+    shock = rng.standard_normal((int(teams.max()) + 1, SIMULATIONS)) * 0.55
+    noise = rng.standard_normal((len(pool), SIMULATIONS))
+    return pool.projections[:, None] + pool.stddevs[:, None] * (0.8 * noise + shock[teams])
+
+
+@pytest.mark.parametrize("rung_name", QUALITY_RUNGS)
+def test_selection(benchmark, rung_name: str) -> None:
+    """What selection buys over entering the pool as it comes.
+
+    The claim being measured: construction answers which rosters are legal, and
+    on a realistically priced slate the median of what it returns sits well below
+    the best of them. Selecting from a much larger pool closes that gap. It does
+    not close all of it — the pool's *best* is a property of generation, and no
+    amount of selecting raises it.
+    """
+    pool = make_slate()
+    rung = rung_by_name(pool, rung_name)
+    spec = rung.spec
+    extra = {"locks": list(rung.locks) or None, "max_exposure": rung.max_exposure}
+
+    best = solve_milp_ortools(pool, spec, locks=list(rung.locks) or None, time_limit_s=120)
+    assert best is not None
+    optimum = float(pool.projection_of(np.array([best]), spec)[0])
+
+    unselected = build_lineups(pool, spec, num_lineups=PORTFOLIO, seed=1, **extra)
+    candidates = build_lineups(pool, spec, num_lineups=CANDIDATES, seed=1, **extra)
+    universe = simulated_universe(pool)
+    sim = score_lineups(pool, spec, candidates, universe)
+
+    win_line = tail_line(sim, 0.99)
+    chosen = select_portfolio(sim, mode="gpp", line=win_line, n_select=PORTFOLIO)
+    selected = candidates[chosen]
+
+    def profile(lineups: np.ndarray) -> dict[str, float]:
+        projections = pool.projection_of(lineups, spec)
+        scored = score_lineups(pool, spec, lineups, universe)
+        return {
+            "n": int(len(lineups)),
+            "median_ratio": round(float(np.median(projections)) / optimum, 4),
+            "worst_ratio": round(float(projections.min()) / optimum, 4),
+            "best_ratio": round(float(projections.max()) / optimum, 4),
+            "p_any_wins": round(float((scored.max(axis=0) >= win_line).mean()), 4),
+            "overlap": round(mean_pairwise_overlap(lineups.tolist()), 4),
+        }
+
+    before = profile(unselected)
+    after = profile(selected)
+
+    benchmark.extra_info["case"] = f"selection/{rung.name}"
+    benchmark.extra_info["impl"] = "slatekit_rust"
+    benchmark.extra_info["detail"] = rung.detail
+    benchmark.extra_info["metric"] = "quality"
+    benchmark.extra_info["quality"] = {
+        "candidates": int(len(candidates)),
+        "optimum": round(optimum, 2),
+        **{f"unselected_{k}": v for k, v in before.items()},
+        **{f"selected_{k}": v for k, v in after.items()},
+    }
+    benchmark.pedantic(lambda: None, rounds=1, iterations=1)
+
+    # Selection has to earn its place on both axes, or it is machinery for its
+    # own sake.
+    assert after["median_ratio"] > before["median_ratio"], "selection did not lift the median"
+    assert after["p_any_wins"] >= before["p_any_wins"], "selection did not improve the tail"
+
+
+@pytest.mark.parametrize("rung_name", ["floor"])
+def test_contest_modes_disagree(benchmark, rung_name: str) -> None:
+    """Cash and tournament portfolios must each win on their own measure.
+
+    If they tied, the two modes would have collapsed into one objective and one
+    of them would be decoration.
+    """
+    pool = make_slate()
+    rung = rung_by_name(pool, rung_name)
+    spec = rung.spec
+    candidates = build_lineups(pool, spec, num_lineups=CANDIDATES, seed=1)
+    universe = simulated_universe(pool)
+    sim = score_lineups(pool, spec, candidates, universe)
+
+    cash_line = tail_line(sim, 0.5)
+    win_line = tail_line(sim, 0.99)
+    cash_idx = select_portfolio(sim, mode="cash", line=cash_line, n_select=PORTFOLIO)
+    gpp_idx = select_portfolio(sim, mode="gpp", line=win_line, n_select=PORTFOLIO)
+
+    # Matched size: tournament mode stops when no candidate covers a new outcome,
+    # and comparing a mean over 150 entries with one over 40 compares portfolio
+    # sizes rather than objectives.
+    n = min(len(cash_idx), len(gpp_idx))
+    cash, gpp = sim[cash_idx[:n]], sim[gpp_idx[:n]]
+
+    cash_rate = (float((cash >= cash_line).mean()), float((gpp >= cash_line).mean()))
+    win_rate = (
+        float((cash.max(axis=0) >= win_line).mean()),
+        float((gpp.max(axis=0) >= win_line).mean()),
+    )
+
+    benchmark.extra_info["case"] = "selection/modes"
+    benchmark.extra_info["impl"] = "slatekit_rust"
+    benchmark.extra_info["metric"] = "quality"
+    benchmark.extra_info["quality"] = {
+        "matched_size": int(n),
+        "cash_line": round(cash_line, 2),
+        "win_line": round(win_line, 2),
+        "cash_mode_entry_cash_rate": round(cash_rate[0], 4),
+        "gpp_mode_entry_cash_rate": round(cash_rate[1], 4),
+        "cash_mode_p_any_wins": round(win_rate[0], 4),
+        "gpp_mode_p_any_wins": round(win_rate[1], 4),
+    }
+    benchmark.pedantic(lambda: None, rounds=1, iterations=1)
+
+    assert cash_rate[0] > cash_rate[1], "cash mode lost on cash rate"
+    assert win_rate[1] > win_rate[0], "tournament mode lost on win probability"

@@ -45,3 +45,33 @@ def build_lineups(
     exposure_limits: np.ndarray,
 ) -> np.ndarray:
     """Build lineups. Returns an ``(n, roster_size)`` int64 index array."""
+
+def score_lineups(
+    universe: np.ndarray,
+    n_outcomes: int,
+    lineups: np.ndarray,
+    roster_size: int,
+    slot_multipliers: np.ndarray,
+) -> np.ndarray:
+    """Score lineups against a universe. Returns ``(n_lineups, n_outcomes)`` float32."""
+
+def select_portfolio(
+    scores: np.ndarray,
+    n_outcomes: int,
+    rosters: np.ndarray,
+    roster_size: int,
+    exposure_limits: np.ndarray,
+    n_select: int,
+    mode: str,
+    line: float,
+    min_gain: float,
+) -> np.ndarray:
+    """Select a portfolio. Returns candidate indices in the order chosen."""
+
+def portfolio_value(
+    scores: np.ndarray,
+    n_outcomes: int,
+    chosen: np.ndarray,
+    threshold: float,
+) -> float:
+    """Mean excess of the portfolio's best entry over ``threshold``."""

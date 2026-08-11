@@ -11,6 +11,10 @@ pool = PlayerPool.from_records(records, DK_MLB_CLASSIC)
 lineups = build_lineups(pool, DK_MLB_CLASSIC, num_lineups=500, seed=1)
 ```
 
+Construction answers which rosters are *legal*, not which are good. To pick a
+portfolio, generate many more candidates than you need and select from them
+against simulated outcomes — see `mlb_dfs_solver.select`.
+
 The compiled kernel lives in `mlb_dfs_solver._native`, which is private: it takes flat
 arrays chosen for cheap marshalling and gives no diagnostics. Everything supported
 is re-exported here, so pinning to these names insulates you from changes to the
@@ -23,6 +27,12 @@ from mlb_dfs_solver._native import __version__ as _native_version
 from mlb_dfs_solver._native import active_isa
 from mlb_dfs_solver.greedy import CONTRARIAN, STANDARD, JitterProfile, build_lineups
 from mlb_dfs_solver.pool import PlayerPool
+from mlb_dfs_solver.select import (
+    portfolio_value,
+    score_lineups,
+    select_portfolio,
+    tail_line,
+)
 from mlb_dfs_solver.spec import ConflictRule, GroupConstraint, RosterSpec, Slot
 
 __all__ = [
@@ -38,6 +48,10 @@ __all__ = [
     "active_isa",
     "build_lineups",
     "native_version",
+    "portfolio_value",
+    "score_lineups",
+    "select_portfolio",
+    "tail_line",
 ]
 
 __version__ = "0.0.1.dev0"

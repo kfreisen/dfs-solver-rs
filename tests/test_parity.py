@@ -25,7 +25,13 @@ from __future__ import annotations
 import numpy as np
 import pytest
 from baselines.reference import build_lineups_reference, is_valid, validity_report
-from mlb_dfs_solver import build_lineups
+from mlb_dfs_solver import (
+    build_lineups,
+    portfolio_value,
+    score_lineups,
+    select_portfolio,
+    tail_line,
+)
 from mlb_dfs_solver.pool import PlayerPool
 from mlb_dfs_solver.spec import GroupConstraint, RosterSpec
 
@@ -480,3 +486,73 @@ def test_both_return_nothing_for_a_stack_the_pool_cannot_supply(
     spec = replace(tiny_spec, groups=(GroupConstraint(key="team", min_stack=2),))
     assert len(build_lineups(pool, spec, num_lineups=20, seed=55)) == 0
     assert build_lineups_reference(pool, spec, num_lineups=20, seed=55) == []
+
+
+# --- Portfolio selection -------------------------------------------------
+
+
+def selection_universe(pool: PlayerPool, seed: int = 3) -> np.ndarray:
+    """Correlated simulated scores for every player."""
+    rng = np.random.default_rng(seed)
+    teams = pool.keys["team"]
+    n_sims = 300
+    shock = rng.standard_normal((int(teams.max()) + 1, n_sims)) * 0.6
+    noise = rng.standard_normal((len(pool), n_sims))
+    return pool.projections[:, None] + pool.stddevs[:, None] * (noise + shock[teams])
+
+
+@pytest.mark.parametrize("mode", ["cash", "gpp", "excess"])
+def test_selection_matches_the_reference_exactly(
+    tiny_pool: PlayerPool, tiny_spec: RosterSpec, mode: str
+) -> None:
+    """Selection is held to *identical* output, not merely comparable.
+
+    Construction cannot be: matching it lineup-for-lineup would mean
+    reimplementing xoshiro256++ in Python. Selection has no generator in it at
+    all — it is a deterministic function of the score matrix — so the strongest
+    possible parity assertion is available, and anything weaker would be leaving
+    a real check on the table.
+    """
+    from baselines.selection import select_portfolio_reference
+
+    candidates = build_lineups(tiny_pool, tiny_spec, num_lineups=300, seed=5)
+    sim = score_lineups(tiny_pool, tiny_spec, candidates, selection_universe(tiny_pool))
+    line = tail_line(sim, 0.5 if mode == "cash" else 0.95)
+
+    kernel = select_portfolio(sim, mode=mode, line=line, n_select=30)
+    reference = select_portfolio_reference(sim, mode=mode, line=line, n_select=30)
+    assert kernel.tolist() == reference
+
+
+def test_selection_matches_the_reference_under_exposure_caps(
+    tiny_pool: PlayerPool, tiny_spec: RosterSpec
+) -> None:
+    from baselines.selection import select_portfolio_reference
+
+    candidates = build_lineups(tiny_pool, tiny_spec, num_lineups=300, seed=5)
+    sim = score_lineups(tiny_pool, tiny_spec, candidates, selection_universe(tiny_pool))
+
+    shared = {
+        "mode": "excess",
+        "line": 0.0,
+        "n_select": 25,
+        "lineups": candidates,
+        "max_exposure": 0.3,
+        "n_players": len(tiny_pool),
+    }
+    kernel = select_portfolio(sim, **shared)  # type: ignore[arg-type]
+    reference = select_portfolio_reference(sim, **shared)  # type: ignore[arg-type]
+    assert kernel.tolist() == reference
+
+
+def test_portfolio_value_matches_the_reference(
+    tiny_pool: PlayerPool, tiny_spec: RosterSpec
+) -> None:
+    from baselines.selection import portfolio_value_reference
+
+    candidates = build_lineups(tiny_pool, tiny_spec, num_lineups=200, seed=5)
+    sim = score_lineups(tiny_pool, tiny_spec, candidates, selection_universe(tiny_pool))
+    chosen = select_portfolio(sim, mode="excess", line=0.0, n_select=20)
+    assert portfolio_value(sim, chosen) == pytest.approx(
+        portfolio_value_reference(sim, chosen), rel=1e-5
+    )
