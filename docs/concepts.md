@@ -200,6 +200,99 @@ Avoiding a pitcher's opposing hitters is a choice; a contrarian may want exactly
 that correlation, and an optimizer that quietly forbade it would be wrong for
 them.
 
+## Putting it in a pipeline
+
+Three things to hand over and two to hand back.
+
+**The pool.** [`PlayerPool.from_records`][mlb_dfs_solver.pool.PlayerPool.from_records]
+takes a sequence of mappings, so an adapter from whatever objects your projection
+layer produces is a comprehension. Multi-position eligibility is a list of names;
+team, opponent and game are ordinary keys.
+
+**The universe.** Any float dtype and any layout. Simulators keep outcome
+matrices narrow — a hundred thousand candidates by ten thousand outcomes is
+gigabytes — so `float16` is accepted and converted exactly, and an
+iteration-major matrix can be handed over as a transposed view without being made
+contiguous first.
+
+**The lineups back.** An `(n, roster_size)` array of pool indices, columns in
+`spec.slot_names()` order. Mapping those back to your own player objects, or to a
+contest upload file, is a lookup.
+
+### Expected payout, not just probability
+
+Selection reads a matrix of *values* per outcome. Nothing requires those to be
+points. Hand it a `(lineups x outcomes)` matrix of **payouts in dollars** with
+`mode="excess"` and `line=0.0`, and the objective becomes
+
+```text
+E[max payout across the portfolio]
+```
+
+which is the standard objective for a top-heavy contest. It stays submodular
+because payouts are non-negative, so lazy evaluation and the `1 - 1/e` guarantee
+carry over unchanged. This is not a special mode; it is what the general one
+already computes.
+
+### A ceiling you already estimated
+
+If you have a real upside estimate — a conformal P95, say — it does not need a
+column of its own. The objective values a player at `projection + t * stddev`
+with `t` drawn per attempt, so
+
+```text
+stddev = (ceiling - projection) / 1.645
+```
+
+makes `t = 1.645` land exactly on your ceiling. Nothing is lost: only the upside
+term is ever used, so an asymmetric right-tail estimate does not drag an implied
+downside along with it.
+
+### Memory
+
+Selection holds the whole score matrix: `candidates x outcomes x 4 bytes`. Twenty
+thousand candidates against ten thousand outcomes is 800 MB, which is fine;
+a hundred thousand is 4 GB, which may not be. If you need that many, score and
+select in two passes — a coarse outcome sample to shortlist, then the full
+resolution on the survivors — rather than reaching for a narrower dtype. Storing
+scores as `float16` was measured and costs real quality, because coverage counts
+outcomes above a line and a 0.06-point error flips the ones sitting on it.
+
+## What belongs in here, and what does not
+
+A library like this fails slowly, by accumulating one reasonable-sounding input
+at a time until nobody can say what the objective is. The implementation this
+grew out of ended with fifteen calibration weights in a single scoring function —
+ace rate, chalk-pitcher reward, one-off penalties, stack coverage — each defensible
+alone and collectively impossible to reason about.
+
+So there is a test for what gets in. **A per-player input belongs here only if the
+objective already models that quantity and is currently guessing at it.**
+Projection, standard deviation and ownership pass: the objective uses all three.
+A ceiling fails, not because it is a bad input but because `stddev` already
+carries it.
+
+Preferences about *roster composition* are a different category and are not
+inputs at all. Most are already reachable:
+
+| Want | Reach for |
+| --- | --- |
+| Prefer popular players | a negative `leverage` exponent — it inverts the fade |
+| Concentrate on one team | `GroupConstraint(min_stack=...)` |
+| Avoid a pitcher's opposing hitters | [`ConflictRule`][mlb_dfs_solver.spec.ConflictRule] |
+| Cap how often a player is used | `max_exposure` |
+| Always use a player | `locks` |
+| Weight a player up or down | adjust their projection before building |
+
+What genuinely cannot be said today is an exposure *floor* — "roster the ace in
+about 37% of entries". Caps bound from above and locks pin at 100%, with nothing
+in between. That is a missing feature rather than a missing column, and it is the
+shape most composition preferences turn out to have once you look at them.
+
+The division the rest of this follows: **player facts are columns, roster rules
+are the specification, portfolio rules are selection, and calibration constants
+live in the caller.**
+
 ## What is not here
 
 Stated plainly, because a library's gaps matter as much as its features.

@@ -395,3 +395,59 @@ def test_field_line_rejects_a_one_dimensional_matrix() -> None:
 
 def test_field_line_of_an_empty_matrix_is_empty() -> None:
     assert field_line(np.empty((0, 0))).size == 0
+
+
+# --- Integrating with a real pipeline ------------------------------------
+
+
+@pytest.mark.parametrize("dtype", [np.float16, np.float32, np.float64])
+def test_a_universe_of_any_float_dtype_is_accepted(
+    tiny_pool: PlayerPool, tiny_spec: RosterSpec, candidates: np.ndarray, dtype: type
+) -> None:
+    """Simulators store outcomes in whatever they store them in.
+
+    float16 in particular: a hundred thousand candidates by ten thousand
+    outcomes is gigabytes, so simulators keep the universe narrow. Converting is
+    exact — every float16 is a float32 — so this costs nothing but the caller's
+    conversion line.
+    """
+    universe = np.random.default_rng(1).normal(10, 3, (len(tiny_pool), 40)).astype(dtype)
+    scored = score_lineups(tiny_pool, tiny_spec, candidates[:20], universe)
+    assert scored.shape == (20, 40)
+    assert np.isfinite(scored).all()
+
+
+def test_a_non_contiguous_universe_is_accepted(
+    tiny_pool: PlayerPool, tiny_spec: RosterSpec, candidates: np.ndarray
+) -> None:
+    # A simulator that stores outcomes iteration-major hands over a transpose,
+    # and should not have to know what C-contiguous means.
+    universe = np.random.default_rng(1).normal(10, 3, (40, len(tiny_pool)))
+    scored = score_lineups(tiny_pool, tiny_spec, candidates[:10], universe.T)
+    assert scored.shape == (10, 40)
+
+
+def test_selection_maximizes_expected_payout_given_a_payout_matrix() -> None:
+    """A payout matrix substitutes for a score matrix, and the objective becomes
+    expected dollars.
+
+    `excess` with a line of zero is the mean over outcomes of the best entry's
+    value. Feed it payouts rather than points and that is `E[max payout]`
+    exactly — the standard portfolio objective for a top-heavy contest, with the
+    submodular guarantee intact because payouts are non-negative.
+
+    Worth a test because nothing in the API says "payout" and nobody would guess
+    it from the signature.
+    """
+    rng = np.random.default_rng(0)
+    scores = rng.normal(120, 12, (200, 300))
+    rank = (-scores).argsort(axis=0).argsort(axis=0)
+    payout = np.where(rank == 0, 10_000.0, np.where(rank < 10, 100.0, 0.0)).astype(np.float32)
+
+    chosen = select_portfolio(payout, mode="excess", line=0.0, n_select=15)
+    expected = float(payout[chosen].max(axis=0).mean())
+    assert portfolio_value(payout, chosen) == pytest.approx(expected, rel=1e-4)
+    # And it beats ranking lineups by their own expected payout, which buys the
+    # same outcomes repeatedly.
+    naive = np.argsort(-payout.mean(axis=1))[:15]
+    assert expected >= float(payout[naive].max(axis=0).mean())

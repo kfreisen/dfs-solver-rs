@@ -828,3 +828,66 @@ def test_pricing_salary_prefers_value_over_raw_projection(tiny_spec: RosterSpec)
     assert median_priced > median_plain, (
         f"pricing salary should lift the pool: {median_priced:.2f} vs {median_plain:.2f}"
     )
+
+
+def test_a_supplied_ceiling_is_expressible_as_an_implied_stddev(
+    tiny_spec: RosterSpec,
+) -> None:
+    """A caller with a real upside estimate does not need a new column.
+
+    The objective values a player at `projection + t * stddev` with `t` drawn per
+    attempt, so a P95 ceiling enters as `stddev = (ceiling - projection) / 1.645`
+    and is then hit exactly at `t = 1.645`. Nothing is lost by the conversion:
+    only the upside term is ever used, so an asymmetric right-tail estimate does
+    not drag an implied downside along with it.
+    """
+    z = 1.645
+    records = [
+        {
+            "name": f"p{i}",
+            "positions": (position,),
+            "salary": 3000 + i * 500,
+            "projection": 8.0 + i,
+            # A ceiling that is deliberately not a fixed multiple of anything.
+            "stddev": ((8.0 + i + (3.0 if i % 2 else 11.0)) - (8.0 + i)) / z,
+            "team": f"T{i % 4}",
+        }
+        for position in ("P", "C", "OF")
+        for i in range(8)
+    ]
+    pool = PlayerPool.from_records(records, tiny_spec)
+
+    # The player's value at t = z is exactly the ceiling that was supplied.
+    for i in (0, 1, 5):
+        ceiling = float(pool.projections[i]) + z * float(pool.stddevs[i])
+        expected = 8.0 + i + (3.0 if i % 2 else 11.0)
+        assert ceiling == pytest.approx(expected)
+
+    assert len(build_lineups(pool, tiny_spec, num_lineups=50, seed=1)) > 0
+
+
+def test_a_negative_leverage_exponent_chases_chalk(
+    tiny_pool: PlayerPool, tiny_spec: RosterSpec
+) -> None:
+    """Preferring popular players needs no new feature.
+
+    Leverage is an exponent on `(1 - ownership)`, so a negative one inverts the
+    fade. Worth pinning because it is the answer to a whole class of "can it
+    also reward X" requests: several of them are already reachable by pointing
+    an existing knob the other way.
+    """
+    fade = build_lineups(
+        tiny_pool,
+        tiny_spec,
+        num_lineups=100,
+        seed=2,
+        profiles=[JitterProfile((0.3, 1.0), (0.5, 1.5))],
+    )
+    chalk = build_lineups(
+        tiny_pool,
+        tiny_spec,
+        num_lineups=100,
+        seed=2,
+        profiles=[JitterProfile((0.3, 1.0), (-1.5, -0.5))],
+    )
+    assert float(np.mean(tiny_pool.ownership[chalk])) > float(np.mean(tiny_pool.ownership[fade]))

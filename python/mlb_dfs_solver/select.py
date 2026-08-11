@@ -33,6 +33,24 @@ score, and two entries that win in the same outcomes are largely wasted.
 
 Pick with `mode`. There is no default, because guessing wrong produces a portfolio
 that is confidently optimized for the contest you are not playing.
+
+## Expected payout
+
+Nothing requires the matrix to hold points. Hand `select_portfolio` a
+`(lineups x outcomes)` matrix of payouts in dollars with `mode="excess"` and
+`line=0.0` and the objective becomes `E[max payout across the portfolio]`, which
+is the standard objective for a top-heavy contest. It remains submodular because
+payouts are non-negative, so lazy evaluation and its guarantee carry over. This
+is not a separate mode — it is what the general one already computes.
+
+## Memory
+
+Selection holds the whole matrix: `candidates x outcomes x 4 bytes`. Twenty
+thousand candidates against ten thousand outcomes is 800 MB. If you need
+substantially more, shortlist on a coarse sample of outcomes and re-score the
+survivors at full resolution, rather than narrowing the dtype — `float16` storage
+was measured and costs real quality, because coverage counts outcomes above a
+line and a 0.06-point error flips the ones sitting on it.
 """
 
 from __future__ import annotations
