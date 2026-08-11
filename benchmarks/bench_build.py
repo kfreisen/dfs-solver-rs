@@ -18,13 +18,14 @@ at these sizes — roughly 20 s/lineup at n=3 and 15 s/lineup at n=10, i.e. slig
 the solve. Claiming superlinearity would have been a nice story and the numbers do
 not support it.
 
-Quality is measured too, in `bench_quality.py` — speed alone would be a misleading
-thing to publish, since the solver produces *better individual lineups* and this
-comparison would look like a win on every axis if only time were reported.
+Quality is measured in `bench_quality.py` and the cost of each constraint in
+`bench_constraints.py`. Speed alone would be a misleading thing to publish, since
+the solver produces better individual lineups and is complete where this is not —
+the comparison would look like a win on every axis if only time were reported.
 
 Run with:
 
-    make bench
+    task bench
 """
 
 from __future__ import annotations

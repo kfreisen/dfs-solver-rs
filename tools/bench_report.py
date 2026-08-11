@@ -135,26 +135,40 @@ def convert_cases(raw: dict[str, Any]) -> list[dict[str, Any]]:
                 f"extra_info {sorted(missing)}. Every benchmark must declare which case "
                 f"and which implementation it measures, or results cannot be compared."
             )
-        cases.append(
-            {
-                "name": info["case"],
-                "impl": info["impl"],
-                "params": info.get("params", {}),
-                "metric": info.get("metric", "seconds"),
-                "n": stats["rounds"],
-                "mean": stats["mean"],
-                "median": stats["median"],
-                "stddev": stats["stddev"],
-                "min": stats["min"],
-            }
-        )
+        case = {
+            "name": info["case"],
+            "impl": info["impl"],
+            "params": info.get("params", {}),
+            "metric": info.get("metric", "seconds"),
+            "n": stats["rounds"],
+            "mean": stats["mean"],
+            "median": stats["median"],
+            "stddev": stats["stddev"],
+            "min": stats["min"],
+        }
+        # Optional, and carried through rather than dropped: `detail` is the
+        # one-line description of a constraint rung, and `quality` is a bag of
+        # score and diversity figures for benchmarks that measure goodness rather
+        # than time. The docs site renders both.
+        for key in ("detail", "quality"):
+            if key in info:
+                case[key] = info[key]
+        cases.append(case)
     return cases
 
 
 def speedup_table(cases: list[dict[str, Any]], fastest_impl: str | None) -> list[str]:
-    """Render a human-readable speedup summary, grouped by case."""
+    """Render a human-readable speedup summary, grouped by case.
+
+    Cases whose metric is not a time are left out. A quality benchmark runs a
+    no-op through the harness so its row exists in the report, and ranking that
+    stopwatch reading against a real measurement would put a meaningless number at
+    the top of the table.
+    """
     by_case: dict[str, list[dict[str, Any]]] = {}
     for case in cases:
+        if case.get("metric", "seconds") != "seconds":
+            continue
         by_case.setdefault(case["name"], []).append(case)
 
     lines: list[str] = []
