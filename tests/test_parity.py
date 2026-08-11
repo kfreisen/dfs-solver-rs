@@ -387,3 +387,96 @@ def test_both_exclude_a_player_capped_at_zero(tiny_pool: PlayerPool, tiny_spec: 
     assert reference
     assert all(15 not in lineup for lineup in kernel.tolist())
     assert all(15 not in lineup for lineup in reference)
+
+
+# --- Minimums ------------------------------------------------------------
+
+
+def test_both_meet_the_same_distinct_minimum(tiny_pool: PlayerPool, tiny_spec: RosterSpec) -> None:
+    from dataclasses import replace
+
+    spec = replace(tiny_spec, groups=(GroupConstraint(key="team", min_distinct=3),))
+    kernel = build_lineups(tiny_pool, spec, num_lineups=50, seed=51)
+    reference = build_lineups_reference(tiny_pool, spec, num_lineups=50, seed=51)
+    assert len(kernel) > 0
+    assert reference
+    assert validity_report(kernel, tiny_pool, spec) == ""
+    for lineup in reference:
+        assert is_valid(lineup, tiny_pool, spec), lineup
+
+
+def test_both_meet_the_same_stack_minimum(tiny_pool: PlayerPool, tiny_spec: RosterSpec) -> None:
+    from dataclasses import replace
+
+    spec = replace(tiny_spec, groups=(GroupConstraint(key="team", min_stack=3),))
+    kernel = build_lineups(tiny_pool, spec, num_lineups=50, seed=52)
+    reference = build_lineups_reference(tiny_pool, spec, num_lineups=50, seed=52)
+    assert len(kernel) > 0
+    assert reference
+    assert validity_report(kernel, tiny_pool, spec) == ""
+    for lineup in reference:
+        assert is_valid(lineup, tiny_pool, spec), lineup
+
+
+def test_both_spread_their_stacks(tiny_pool: PlayerPool, tiny_spec: RosterSpec) -> None:
+    """Neither may answer "which team?" the same way every attempt.
+
+    The two draw from different generators, so they will not choose the same
+    teams — but a portfolio concentrated on one team is a failure of the
+    mechanism, and that is checkable on both.
+    """
+    from dataclasses import replace
+
+    spec = replace(tiny_spec, groups=(GroupConstraint(key="team", min_stack=3),))
+
+    def stacked_teams(lineups: list[list[int]]) -> set[int]:
+        out = set()
+        for lineup in lineups:
+            counts: dict[int, int] = {}
+            for p in lineup:
+                key = int(tiny_pool.keys["team"][p])
+                counts[key] = counts.get(key, 0) + 1
+            out.add(max(counts, key=lambda k: counts[k]))
+        return out
+
+    kernel = build_lineups(tiny_pool, spec, num_lineups=60, seed=53)
+    reference = build_lineups_reference(tiny_pool, spec, num_lineups=60, seed=53)
+    assert len(stacked_teams(kernel.tolist())) > 1
+    assert len(stacked_teams(reference)) > 1
+
+
+def test_both_meet_minimums_through_salary_repair(
+    tiny_pool: PlayerPool, tiny_spec: RosterSpec
+) -> None:
+    from dataclasses import replace
+
+    spec = replace(
+        tiny_spec,
+        salary_cap=22_000,
+        salary_floor=20_000,
+        groups=(
+            GroupConstraint(key="team", min_stack=2),
+            GroupConstraint(key="team", min_distinct=2),
+        ),
+    )
+    kernel = build_lineups(tiny_pool, spec, num_lineups=50, seed=54)
+    reference = build_lineups_reference(tiny_pool, spec, num_lineups=50, seed=54)
+    assert len(kernel) > 0, "repair recovered nothing to check"
+    assert reference
+    assert validity_report(kernel, tiny_pool, spec) == ""
+    for lineup in reference:
+        assert is_valid(lineup, tiny_pool, spec), lineup
+
+
+def test_both_return_nothing_for_a_stack_the_pool_cannot_supply(
+    tiny_spec: RosterSpec,
+) -> None:
+    from dataclasses import replace
+
+    from conftest import make_records
+
+    records = [{**r, "team": f"T{i}"} for i, r in enumerate(make_records())]
+    pool = PlayerPool.from_records(records, tiny_spec)
+    spec = replace(tiny_spec, groups=(GroupConstraint(key="team", min_stack=2),))
+    assert len(build_lineups(pool, spec, num_lineups=20, seed=55)) == 0
+    assert build_lineups_reference(pool, spec, num_lineups=20, seed=55) == []

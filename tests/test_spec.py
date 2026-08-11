@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import pytest
 from mlb_dfs_solver.spec import (
+    UNCAPPED,
     ConflictRule,
     GroupConstraint,
     RosterSpec,
@@ -223,3 +224,44 @@ def test_a_conflict_rule_naming_an_unknown_position_is_rejected() -> None:
         simple(
             conflicts=(ConflictRule(left_key="opponent", right_key="team", left_positions=("QB",)),)
         )
+
+
+def test_a_constraint_defaults_to_uncapped_with_no_minimums() -> None:
+    with pytest.raises(ValueError, match="constrains nothing"):
+        GroupConstraint(key="team")
+
+
+def test_a_negative_minimum_is_rejected() -> None:
+    with pytest.raises(ValueError, match="negative min_distinct"):
+        GroupConstraint(key="team", min_distinct=-1)
+
+
+def test_a_stack_above_its_own_cap_is_rejected() -> None:
+    with pytest.raises(ValueError, match="cannot both hold"):
+        GroupConstraint(key="team", max_count=3, min_stack=4)
+
+
+def test_an_uncapped_constraint_reports_the_sentinel() -> None:
+    # The kernel takes a u32, so "no ceiling" has to be a number rather than None.
+    assert GroupConstraint(key="team", min_distinct=2).cap == UNCAPPED
+    assert GroupConstraint(key="team", max_count=6).cap == 6
+
+
+def test_a_minimum_larger_than_the_slots_it_counts_is_rejected() -> None:
+    # Three slots cannot show four distinct teams. Caught here because the
+    # alternative is an empty result the caller cannot distinguish from a thin
+    # slate.
+    with pytest.raises(ValueError, match="counts only 3 roster slot"):
+        simple(groups=(GroupConstraint(key="team", min_distinct=4),))
+
+
+def test_a_minimum_is_measured_against_only_the_slots_it_names() -> None:
+    with pytest.raises(ValueError, match="counts only 1 roster slot"):
+        simple(groups=(GroupConstraint(key="team", min_stack=2, slots=("C",)),))
+    # The same minimum against both slot groups is fine.
+    simple(groups=(GroupConstraint(key="team", min_stack=2, slots=("C", "P")),))
+
+
+def test_group_keys_include_minimum_only_constraints() -> None:
+    spec = simple(groups=(GroupConstraint(key="game", min_distinct=2),))
+    assert spec.group_keys == ("game",)

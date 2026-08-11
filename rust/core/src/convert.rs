@@ -122,8 +122,12 @@ pub struct SpecArrays<'a> {
     pub salary_floor: i64,
     /// Which key column each group constraint reads.
     pub group_key_columns: &'a [u64],
-    /// The cap for each group constraint.
+    /// The cap for each group constraint; `UNCAPPED` for minimum-only ones.
     pub group_max_counts: &'a [u32],
+    /// How many distinct key values each constraint requires; 0 imposes nothing.
+    pub group_min_distincts: &'a [u32],
+    /// How many players one key value must supply for each constraint; 0 none.
+    pub group_min_stacks: &'a [u32],
     /// Which slot groups each constraint counts.
     pub group_slot_masks: &'a [u64],
     /// Flattened `(n_columns, n_players)` key matrix.
@@ -163,7 +167,11 @@ pub fn spec_from_arrays(
         });
     }
     let n_groups = arrays.group_max_counts.len();
-    if arrays.group_key_columns.len() != n_groups || arrays.group_slot_masks.len() != n_groups {
+    if arrays.group_key_columns.len() != n_groups
+        || arrays.group_slot_masks.len() != n_groups
+        || arrays.group_min_distincts.len() != n_groups
+        || arrays.group_min_stacks.len() != n_groups
+    {
         return Err(ConvertError::GroupArrayMismatch {
             key_columns: arrays.group_key_columns.len(),
             max_counts: n_groups,
@@ -197,6 +205,8 @@ pub fn spec_from_arrays(
             .map(|i| GroupConstraint {
                 key_column: arrays.group_key_columns[i] as usize,
                 max_count: arrays.group_max_counts[i],
+                min_distinct: arrays.group_min_distincts[i],
+                min_stack: arrays.group_min_stacks[i],
                 slots: arrays.group_slot_masks[i],
             })
             .collect(),
@@ -310,6 +320,8 @@ mod tests {
             salary_floor: 49_000,
             group_key_columns: &[0, 0],
             group_max_counts: &[6, 5],
+            group_min_distincts: &[0, 0],
+            group_min_stacks: &[0, 0],
             group_slot_masks: &[0b111, 0b011],
             key_columns,
             conflict_left: &[],
@@ -426,6 +438,8 @@ mod tests {
         let mut a = arrays(&keys);
         a.group_key_columns = &[0];
         a.group_max_counts = &[1, 2];
+        a.group_min_distincts = &[0, 0];
+        a.group_min_stacks = &[0, 0];
         a.group_slot_masks = &[1];
         assert!(matches!(
             spec_from_arrays(a, 1),

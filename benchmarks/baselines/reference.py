@@ -66,9 +66,29 @@ class _Tally:
             key = self.keys[group.key][player]
             if key < 0:
                 continue
-            if self.counts[gi].get(key, 0) >= group.max_count:
+            if self.counts[gi].get(key, 0) >= group.cap:
                 return True
         return False
+
+    def distinct_count(self, group_index: int) -> int:
+        """How many distinct key values this constraint currently sees."""
+        return sum(1 for count in self.counts[group_index].values() if count > 0)
+
+    def max_stack(self, group_index: int) -> int:
+        """The largest number of players any one key value has contributed."""
+        return max(self.counts[group_index].values(), default=0)
+
+    def count_of(self, group_index: int, key: int) -> int:
+        """How many players this constraint has counted for `key`."""
+        return self.counts[group_index].get(key, 0) if key >= 0 else 0
+
+    def key_of(self, group_index: int, player: int) -> int:
+        """The key value `player` carries for this constraint."""
+        return self.keys[self.spec.groups[group_index].key][player]
+
+    def counts_slot(self, group_index: int, slot_group: int) -> bool:
+        """Whether this constraint counts `slot_group`."""
+        return bool(self.slot_masks[group_index] & (1 << slot_group))
 
     def add(self, player: int, slot_group: int, delta: int = 1) -> None:
         for gi, group in enumerate(self.spec.groups):
@@ -78,6 +98,56 @@ class _Tally:
             if key < 0:
                 continue
             self.counts[gi][key] = self.counts[gi].get(key, 0) + delta
+
+
+def _counted_suffix(spec: RosterSpec, slot_masks: list[int]) -> list[list[int]]:
+    """`[g][j]`: roster slots constraint `g` still counts from slot group `j` on.
+
+    Knowing how many counted slots are left is what lets a forward fill tell "this
+    pick is fine" from "this pick strands the requirement". Without it a distinct
+    minimum could only be checked at the end, by which point every attempt that
+    was going to fail has already spent a full roster finding out.
+    """
+    table: list[list[int]] = []
+    for gi in range(len(spec.groups)):
+        suffix = [0] * (len(spec.slots) + 1)
+        for j in range(len(spec.slots) - 1, -1, -1):
+            here = spec.slots[j].count if slot_masks[gi] & (1 << j) else 0
+            suffix[j] = suffix[j + 1] + here
+        table.append(suffix)
+    return table
+
+
+def _capable_keys(
+    spec: RosterSpec,
+    slot_masks: list[int],
+    eligible: list[list[int]],
+    keys: dict[str, Sequence[int]],
+) -> list[list[int]]:
+    """Key values each stack constraint could plausibly be built around.
+
+    A team with two eligible outfielders cannot supply a five-stack, and drawing
+    it as a target would waste the attempt. Bounded per slot group by both the
+    slot count and how many of the key's players are eligible there.
+    """
+    capable: list[list[int]] = []
+    for gi, group in enumerate(spec.groups):
+        if not group.min_stack:
+            capable.append([])
+            continue
+        reach: dict[int, int] = {}
+        for j, slot in enumerate(spec.slots):
+            if not slot_masks[gi] & (1 << j):
+                continue
+            per_key: dict[int, int] = {}
+            for player in eligible[j]:
+                key = keys[group.key][player]
+                if key >= 0:
+                    per_key[key] = per_key.get(key, 0) + 1
+            for key, available in per_key.items():
+                reach[key] = reach.get(key, 0) + min(available, slot.count)
+        capable.append(sorted(k for k, r in reach.items() if r >= group.min_stack))
+    return capable
 
 
 def build_lineups_reference(
@@ -213,6 +283,13 @@ def build_lineups_reference(
         take = min(spec.slots[j].count, len(cheapest[j]) - 1)
         suffix_cost[j] = suffix_cost[j + 1] + cheapest[j][take]
 
+    counted_suffix = _counted_suffix(spec, slot_masks)
+    capable = _capable_keys(spec, slot_masks, eligible, keys)
+    # A stack nobody can supply makes every lineup impossible; say so once
+    # rather than discovering it attempt by attempt.
+    if any(g.min_stack and not capable[gi] for gi, g in enumerate(spec.groups)):
+        return []
+
     rng = random.Random(seed)
     tally = _Tally(spec, keys, slot_masks)
     seen: set[tuple[int, ...]] = set()
@@ -225,6 +302,14 @@ def build_lineups_reference(
     for attempt in range(num_lineups * attempts_per_lineup):
         if len(out) >= num_lineups:
             break
+
+        # The key value each stack chases this attempt, drawn before the jitter
+        # from the same generator. Redrawing per attempt is the mechanism: the
+        # constraint asks for "some" key value, and answering that question the
+        # same way every time would stack the whole portfolio on one team.
+        stack_targets = [
+            rng.choice(capable[gi]) if g.min_stack else -1 for gi, g in enumerate(spec.groups)
+        ]
 
         (ceiling_low, ceiling_high), (leverage_low, leverage_high) = profiles[
             attempt % len(profiles)
@@ -252,6 +337,8 @@ def build_lineups_reference(
             suffix_cost,
             conflicts,
             locked_by_slot,
+            counted_suffix,
+            stack_targets,
         )
         if filled is None:
             continue
@@ -293,6 +380,8 @@ def _fill(
     suffix_cost: list[int],
     conflicts: dict[int, set[int]],
     locked_by_slot: list[list[int]],
+    counted_suffix: list[list[int]],
+    stack_targets: list[int],
 ) -> tuple[list[int], int] | None:
     """Greedily fill every slot; return None if a slot cannot be filled.
 
@@ -306,6 +395,8 @@ def _fill(
     # players and a flag could not tell "unblocked" from "blocked by someone
     # else". Not allocated at all when nothing conflicts, matching the kernel.
     blocked = [0] * n if conflicts else []
+    has_minimums = any(g.min_distinct or g.min_stack for g in spec.groups)
+    has_stacks = any(g.min_stack for g in spec.groups)
     tally.reset()
     lineup: list[int] = []
     salary = 0
@@ -342,29 +433,103 @@ def _fill(
             (i for i in eligible[group_idx] if not used[i]),
             key=lambda i: (-objective[i], i),
         )
-        for player in candidates:
-            if picked == slot.count:
-                break
-            # Reserve enough for the slots still to be filled, including the
-            # rest of this group.
-            still_needed = min(slot.count - picked - 1, len(cheapest[group_idx]) - 1)
-            remaining = cheapest[group_idx][still_needed] + suffix_cost[group_idx + 1]
-            if salary + salaries[player] + remaining > spec.salary_cap:
-                continue
-            if tally.would_exceed(player, group_idx):
-                continue
-            if conflicts and blocked[player]:
-                continue
-            used[player] = True
-            tally.add(player, group_idx)
-            for other in conflicts.get(player, ()):
-                blocked[other] += 1
-            salary += salaries[player]
-            lineup.append(player)
-            picked += 1
+        # Two passes when a stack still wants players this group could supply:
+        # the first takes only players that feed it, the second everything else.
+        # Filling a stack from the best available stack players rather than
+        # whatever is left at the end is what makes it a stack worth having.
+        # Both passes walk the same sorted list, so ordering is untouched.
+        for stack_pass in (True, False) if has_stacks else (False,):
+            for player in candidates:
+                if picked == slot.count:
+                    break
+                if used[player]:
+                    continue
+                if stack_pass and not _feeds_a_stack(spec, tally, stack_targets, player, group_idx):
+                    continue
+                # Reserve enough for the slots still to be filled, including the
+                # rest of this group.
+                still_needed = min(slot.count - picked - 1, len(cheapest[group_idx]) - 1)
+                remaining = cheapest[group_idx][still_needed] + suffix_cost[group_idx + 1]
+                if salary + salaries[player] + remaining > spec.salary_cap:
+                    continue
+                if tally.would_exceed(player, group_idx):
+                    continue
+                if conflicts and blocked[player]:
+                    continue
+                if has_minimums and _strands_a_minimum(
+                    spec, tally, counted_suffix, player, group_idx, picked
+                ):
+                    continue
+                used[player] = True
+                tally.add(player, group_idx)
+                for other in conflicts.get(player, ()):
+                    blocked[other] += 1
+                salary += salaries[player]
+                lineup.append(player)
+                picked += 1
         if picked < slot.count:
             return None
+
+    # Distinct minimums are guaranteed by construction — no pick that would make
+    # one unreachable is ever taken. A stack is not: the drawn key may simply not
+    # have had enough affordable players in the slots that were left.
+    if has_stacks and not all(
+        tally.max_stack(gi) >= g.min_stack for gi, g in enumerate(spec.groups) if g.min_stack
+    ):
+        return None
     return lineup, salary
+
+
+def _feeds_a_stack(
+    spec: RosterSpec,
+    tally: _Tally,
+    stack_targets: list[int],
+    player: int,
+    slot_group: int,
+) -> bool:
+    """Whether a stack still owed players wants this one."""
+    for gi, group in enumerate(spec.groups):
+        if not group.min_stack or not tally.counts_slot(gi, slot_group):
+            continue
+        target = stack_targets[gi]
+        if target < 0 or tally.key_of(gi, player) != target:
+            continue
+        if tally.count_of(gi, target) < group.min_stack:
+            return True
+    return False
+
+
+def _strands_a_minimum(
+    spec: RosterSpec,
+    tally: _Tally,
+    counted_suffix: list[list[int]],
+    player: int,
+    slot_group: int,
+    picked: int,
+) -> bool:
+    """Whether taking `player` leaves a distinct minimum out of reach.
+
+    Exact, not a heuristic: after this pick a known number of counted slots
+    remain and the requirement needs a known number of further distinct values.
+    If the second exceeds the first the attempt is already lost, and continuing
+    would only discover that after spending the rest of the roster on it.
+    """
+    for gi, group in enumerate(spec.groups):
+        if not group.min_distinct:
+            continue
+        counts_here = tally.counts_slot(gi, slot_group)
+        left_in_group = slot_group_remaining(spec, slot_group, picked) if counts_here else 0
+        remaining = left_in_group + counted_suffix[gi][slot_group + 1]
+        gain = 1 if counts_here and tally.count_of(gi, tally.key_of(gi, player)) == 0 else 0
+        still_needed = max(0, group.min_distinct - (tally.distinct_count(gi) + gain))
+        if still_needed > remaining:
+            return True
+    return False
+
+
+def slot_group_remaining(spec: RosterSpec, slot_group: int, picked: int) -> int:
+    """Slots left in `slot_group` after the pick being considered."""
+    return spec.slots[slot_group].count - picked - 1
 
 
 def _repair_up(
@@ -391,6 +556,7 @@ def _repair_up(
     needed = spec.salary_floor - salary
     if needed <= 0:
         return lineup, salary
+    has_minimums = any(g.min_distinct or g.min_stack for g in spec.groups)
 
     slot_of: list[int] = []
     for group_idx, slot in enumerate(spec.slots):
@@ -434,6 +600,12 @@ def _repair_up(
                 continue
             if conflicts and blocked[candidate]:
                 continue
+            # The outgoing player is already out of the tally, so this sees the
+            # lineup the swap would produce. The lineup is otherwise complete —
+            # there are no further picks to fix a requirement this breaks — so
+            # the test is for "met", not "still reachable".
+            if has_minimums and not _swap_keeps_minimums(spec, tally, candidate, group_idx):
+                continue
             tally.add(candidate, group_idx)
             replaced = list(lineup)
             replaced[slot_index] = candidate
@@ -445,6 +617,23 @@ def _repair_up(
             blocked[other] += 1
 
     return None
+
+
+def _swap_keeps_minimums(spec: RosterSpec, tally: _Tally, candidate: int, slot_group: int) -> bool:
+    """Whether bringing `candidate` in still satisfies every minimum."""
+    for gi, group in enumerate(spec.groups):
+        if not group.min_distinct and not group.min_stack:
+            continue
+        counts_here = tally.counts_slot(gi, slot_group)
+        key = tally.key_of(gi, candidate) if counts_here else -1
+        gain = 1 if counts_here and tally.count_of(gi, key) == 0 and key >= 0 else 0
+        if tally.distinct_count(gi) + gain < group.min_distinct:
+            return False
+        if group.min_stack:
+            with_candidate = tally.count_of(gi, key) + (1 if key >= 0 else 0)
+            if max(tally.max_stack(gi), with_candidate) < group.min_stack:
+                return False
+    return True
 
 
 def is_valid(
@@ -502,7 +691,11 @@ def is_valid(
             if key < 0:
                 continue
             counts[key] = counts.get(key, 0) + 1
-        if any(count > group.max_count for count in counts.values()):
+        if any(count > group.cap for count in counts.values()):
+            return False
+        if len(counts) < group.min_distinct:
+            return False
+        if group.min_stack and max(counts.values(), default=0) < group.min_stack:
             return False
 
     return True

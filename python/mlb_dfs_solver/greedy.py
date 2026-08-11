@@ -95,6 +95,8 @@ class _Encoded:
     slot_salary_multipliers: np.ndarray
     group_key_columns: np.ndarray
     group_max_counts: np.ndarray
+    group_min_distincts: np.ndarray
+    group_min_stacks: np.ndarray
     group_slot_masks: np.ndarray
     key_columns: np.ndarray
     conflict_left: np.ndarray
@@ -143,6 +145,8 @@ def _encode(
         slot_salary_multipliers=slots.slot_salary_multipliers,
         group_key_columns=slots.group_key_columns,
         group_max_counts=slots.group_max_counts,
+        group_min_distincts=slots.group_min_distincts,
+        group_min_stacks=slots.group_min_stacks,
         group_slot_masks=slots.group_slot_masks,
         key_columns=key_columns,
         conflict_left=np.ascontiguousarray(conflict_pairs[0], dtype=np.uint32),
@@ -163,6 +167,8 @@ class _SlotArrays:
     slot_salary_multipliers: np.ndarray
     group_key_columns: np.ndarray
     group_max_counts: np.ndarray
+    group_min_distincts: np.ndarray
+    group_min_stacks: np.ndarray
     group_slot_masks: np.ndarray
 
 
@@ -192,7 +198,9 @@ def _encode_slots(spec: RosterSpec) -> _SlotArrays:
             [slot.salary_multiplier for slot in spec.slots], dtype=np.float64
         ),
         group_key_columns=np.asarray([column_of[g.key] for g in spec.groups], dtype=np.uint64),
-        group_max_counts=np.asarray([g.max_count for g in spec.groups], dtype=np.uint32),
+        group_max_counts=np.asarray([g.cap for g in spec.groups], dtype=np.uint32),
+        group_min_distincts=np.asarray([g.min_distinct for g in spec.groups], dtype=np.uint32),
+        group_min_stacks=np.asarray([g.min_stack for g in spec.groups], dtype=np.uint32),
         group_slot_masks=np.asarray(
             [spec.slot_mask_for(g.slots) for g in spec.groups], dtype=np.uint64
         ),
@@ -482,6 +490,8 @@ def build_lineups(
         int(spec.salary_floor),
         encoded.group_key_columns,
         encoded.group_max_counts,
+        encoded.group_min_distincts,
+        encoded.group_min_stacks,
         encoded.group_slot_masks,
         encoded.key_columns,
         encoded.conflict_left,

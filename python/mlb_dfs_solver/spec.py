@@ -9,7 +9,7 @@ The two rules a daily-fantasy contest usually states as separate features — "a
 constraint here, differing only in which slots they count. That collapse is the
 reason this generalizes past the sport it came from.
 
-Two shapes do not collapse into a group cap, and each gets its own mechanism:
+Several shapes do not collapse into a group cap, and each gets its own mechanism:
 
 * A **showdown captain** is worth more and costs more than the same player in a
   flex slot, so [`Slot`][mlb_dfs_solver.spec.Slot] carries score and salary
@@ -19,6 +19,22 @@ Two shapes do not collapse into a group cap, and each gets its own mechanism:
   grouping. [`ConflictRule`][mlb_dfs_solver.spec.ConflictRule] expresses it, and
   nothing turns it on unless you ask: it is a preference, not a contest rule, and
   a contrarian who wants that correlation is entitled to it.
+* **"Players from at least two different games"** counts how many key values are
+  used rather than how many players share one, so it is
+  `GroupConstraint(min_distinct=...)`. Most classic contests enforce this at
+  entry.
+* **"At least four hitters from one team"** — a stack — is
+  `GroupConstraint(min_stack=...)`, and is the odd one out. Every other rule here
+  is a property a finished lineup either has or does not, testable one player at
+  a time. A stack is existential: it asks that *some* team be well represented
+  without saying which, so the builder has to choose one before it can act.
+
+  It chooses per attempt, uniformly among the teams that could actually supply
+  the players, drawing from the same generator as the jitter. That is what makes
+  a portfolio come back stacked across many teams rather than piling every
+  lineup onto whichever team the builder happened to prefer. Within a slot the
+  stack is filled from the best available players of the chosen team, not from
+  whatever is left over once the rest of the roster is set.
 """
 
 from __future__ import annotations
@@ -31,6 +47,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
 
 __all__ = [
+    "UNCAPPED",
     "ConflictRule",
     "GroupConstraint",
     "RosterSpec",
@@ -141,30 +158,80 @@ class Slot:
                 raise ValueError(msg)
 
 
+UNCAPPED = 2**32 - 1
+"""A `max_count` that imposes no ceiling, for a minimum-only constraint."""
+
+
 @dataclass(frozen=True, slots=True)
 class GroupConstraint:
-    """A cap on how many selected players may share a key.
+    """What a set of selected players sharing a key must look like.
+
+    Three requirements, any combination of which may be set, all counted over the
+    same chosen slots:
+
+    | Field | Reads as |
+    | --- | --- |
+    | `max_count` | at most N players share one key value |
+    | `min_distinct` | at least N *different* key values appear |
+    | `min_stack` | at least one key value supplies N players |
+
+    They are genuinely different shapes, not variations on a theme. A cap is about
+    one key value; `min_distinct` is about how many are used at all; `min_stack`
+    is existential — it asks that *some* value be well represented without saying
+    which, which is why the builder has to pick one before it can act.
 
     Attributes:
         key: Name of the per-player key this counts, e.g. `"team"`.
-        max_count: Maximum players sharing one value of that key.
-        slots: Slot names that count toward the cap. `None` means every slot.
-            Restricting this is how "at most 5 hitters from one team" is expressed
-            without a special case.
+        max_count: Maximum players sharing one value of that key. `None` leaves it
+            uncapped, for a constraint that only imposes a minimum.
+        min_distinct: How many distinct values of the key must appear. This is the
+            shape behind "players from at least two different games", which most
+            classic contests require at entry and which a cap cannot express.
+        min_stack: How many players at least one key value must supply — a stack.
+            Unlike the other two this is a strategy rather than an operator's
+            rule; see the module docstring for how the builder chooses which value
+            to stack, and why that choice is redrawn per attempt.
+        slots: Slot names that count toward this constraint. `None` means every
+            slot. Restricting this is how "at most 5 hitters from one team" is
+            expressed without a special case, and equally how a stack is confined
+            to hitters.
     """
 
     key: str
-    max_count: int
+    max_count: int | None = None
+    min_distinct: int = 0
+    min_stack: int = 0
     slots: tuple[str, ...] | None = None
 
     def __post_init__(self) -> None:
-        """Reject a cap that forbids every lineup."""
-        if self.max_count < 1:
+        """Reject a constraint that forbids every lineup, or none of them."""
+        if self.max_count is not None and self.max_count < 1:
             msg = (
                 f"group constraint on {self.key!r} has max_count {self.max_count}, "
                 f"which forbids every lineup; exclude those players from the pool instead"
             )
             raise ValueError(msg)
+        for which, value in (("min_distinct", self.min_distinct), ("min_stack", self.min_stack)):
+            if value < 0:
+                msg = f"group constraint on {self.key!r} has negative {which} {value}"
+                raise ValueError(msg)
+        if self.max_count is None and not self.min_distinct and not self.min_stack:
+            msg = (
+                f"group constraint on {self.key!r} sets no cap, no distinct minimum "
+                f"and no stack, so it constrains nothing; remove it"
+            )
+            raise ValueError(msg)
+        if self.max_count is not None and self.min_stack > self.max_count:
+            msg = (
+                f"group constraint on {self.key!r} requires a stack of {self.min_stack} "
+                f"but caps the same key at {self.max_count}; those cannot both hold"
+            )
+            raise ValueError(msg)
+
+    @property
+    def cap(self) -> int:
+        """`max_count` as the kernel wants it, with `None` spelled [`UNCAPPED`]."""
+        return UNCAPPED if self.max_count is None else self.max_count
 
 
 @dataclass(frozen=True, slots=True)
@@ -295,6 +362,25 @@ class RosterSpec:
                 raise ValueError(msg)
 
         known_slots = set(slot_names)
+        counted = {slot.name: slot.count for slot in self.slots}
+        for group in self.groups:
+            # A minimum asking for more players than the slots it counts can hold
+            # can never be met. Caught here because the alternative is the caller
+            # reading "no valid lineups found" and having no way to tell that from
+            # a slate that simply lacked the players.
+            names = group.slots if group.slots is not None else tuple(counted)
+            total = sum(counted.get(name, 0) for name in names)
+            for which, wanted in (
+                ("min_distinct", group.min_distinct),
+                ("min_stack", group.min_stack),
+            ):
+                if wanted > total:
+                    msg = (
+                        f"group constraint on {group.key!r} requires {which} {wanted} "
+                        f"but counts only {total} roster slot(s), so no lineup can "
+                        f"satisfy it"
+                    )
+                    raise ValueError(msg)
         for group in self.groups:
             if group.slots is None:
                 continue

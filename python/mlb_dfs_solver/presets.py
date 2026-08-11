@@ -8,10 +8,28 @@ Operators change these rules, sometimes mid-season. Treat a preset as a starting
 point that was correct when written, and check it against the contest you are
 actually entering.
 
-No preset declares a [`ConflictRule`][mlb_dfs_solver.spec.ConflictRule]. Rules here
-are the ones the operator enforces; "no hitters against my pitcher" is a strategy,
-and a preset that quietly imposed it would be wrong for anyone deliberately
-correlating that way. Add them yourself with `dataclasses.replace`.
+No preset declares a [`ConflictRule`][mlb_dfs_solver.spec.ConflictRule] or a
+`min_stack`. Rules here are the ones the operator enforces; "no hitters against my
+pitcher" and "stack four bats" are strategies, and a preset that quietly imposed
+either would be wrong for anyone playing differently. Add them with
+`dataclasses.replace`.
+
+Nor does any preset carry the "players from at least two different games" rule
+these contests do impose. It needs a `game` key on every player, which a pool
+built for a preset that never asked for one would not have, and a constraint
+naming a missing key fails loudly at build time. Add it yourself once your
+records carry the key:
+
+```python
+from dataclasses import replace
+from mlb_dfs_solver.presets import DK_NFL_CLASSIC
+from mlb_dfs_solver.spec import GroupConstraint
+
+spec = replace(
+    DK_NFL_CLASSIC,
+    groups=(*DK_NFL_CLASSIC.groups, GroupConstraint(key="game", min_distinct=2)),
+)
+```
 """
 
 from __future__ import annotations
@@ -96,10 +114,10 @@ DK_NFL_SHOWDOWN = RosterSpec(
     ),
     salary_cap=50_000,
     salary_floor=0,
-    # DraftKings also requires players from both teams. That is a *minimum*, which
-    # this specification cannot yet express — a group cap only bounds from above.
-    # Stated here rather than omitted silently: a lineup this builder considers
-    # legal may still be rejected at entry.
+    # DraftKings also requires players from both teams. That is expressible —
+    # `GroupConstraint(key="team", min_distinct=2)` — but it is left off here for
+    # the same reason as the game rule above: it needs a key on every record, and
+    # a preset cannot know the caller supplied one. Add it when yours does.
     groups=(),
 )
 

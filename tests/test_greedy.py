@@ -566,3 +566,173 @@ def test_locks_and_a_global_cap_coexist_when_consistent(
     assert len(lineups) > 0
     assert all(9 in lineup for lineup in lineups.tolist())
     assert sum(16 in lineup for lineup in lineups.tolist()) <= 6
+
+
+# --- Minimums ------------------------------------------------------------
+
+
+def distinct_teams(pool: PlayerPool, lineup: list[int]) -> int:
+    return len({int(pool.keys["team"][p]) for p in lineup})
+
+
+def biggest_stack(pool: PlayerPool, lineup: list[int]) -> int:
+    counts: dict[int, int] = {}
+    for p in lineup:
+        key = int(pool.keys["team"][p])
+        counts[key] = counts.get(key, 0) + 1
+    return max(counts.values(), default=0)
+
+
+def test_a_distinct_minimum_is_met_by_every_lineup(
+    tiny_pool: PlayerPool, tiny_spec: RosterSpec
+) -> None:
+    spec = replace(tiny_spec, groups=(GroupConstraint(key="team", min_distinct=3),))
+    lineups = build_lineups(tiny_pool, spec, num_lineups=50, seed=40)
+    assert len(lineups) > 0
+    assert all(distinct_teams(tiny_pool, lineup) >= 3 for lineup in lineups.tolist())
+
+
+def test_a_distinct_minimum_actually_binds(tiny_pool: PlayerPool, tiny_spec: RosterSpec) -> None:
+    # Without it the builder returns lineups from fewer teams, so the assertion
+    # above is not passing for free.
+    loose = build_lineups(tiny_pool, tiny_spec, num_lineups=50, seed=40)
+    assert any(distinct_teams(tiny_pool, lineup) < 4 for lineup in loose.tolist())
+
+    spec = replace(tiny_spec, groups=(GroupConstraint(key="team", min_distinct=4),))
+    lineups = build_lineups(tiny_pool, spec, num_lineups=50, seed=40)
+    assert len(lineups) > 0
+    assert all(distinct_teams(tiny_pool, lineup) == 4 for lineup in lineups.tolist())
+
+
+def test_a_distinct_minimum_counts_only_its_named_slots(
+    tiny_pool: PlayerPool, tiny_spec: RosterSpec
+) -> None:
+    # Three distinct teams among C and the two OF slots; the pitcher does not
+    # help satisfy it.
+    spec = replace(
+        tiny_spec, groups=(GroupConstraint(key="team", min_distinct=3, slots=("C", "OF")),)
+    )
+    lineups = build_lineups(tiny_pool, spec, num_lineups=40, seed=41)
+    assert len(lineups) > 0
+    for lineup in lineups.tolist():
+        assert distinct_teams(tiny_pool, lineup[:3]) >= 3
+
+
+def test_a_distinct_minimum_the_pool_cannot_meet_returns_nothing(
+    tiny_spec: RosterSpec,
+) -> None:
+    records = [{**r, "team": "ONE"} for r in make_records()]
+    pool = PlayerPool.from_records(records, tiny_spec)
+    spec = replace(tiny_spec, groups=(GroupConstraint(key="team", min_distinct=2),))
+    assert len(build_lineups(pool, spec, num_lineups=20, seed=41)) == 0
+
+
+def test_a_stack_minimum_is_met_by_every_lineup(
+    tiny_pool: PlayerPool, tiny_spec: RosterSpec
+) -> None:
+    spec = replace(tiny_spec, groups=(GroupConstraint(key="team", min_stack=3),))
+    lineups = build_lineups(tiny_pool, spec, num_lineups=50, seed=42)
+    assert len(lineups) > 0
+    assert all(biggest_stack(tiny_pool, lineup) >= 3 for lineup in lineups.tolist())
+
+
+def test_a_stack_minimum_actually_binds(tiny_pool: PlayerPool, tiny_spec: RosterSpec) -> None:
+    loose = build_lineups(tiny_pool, tiny_spec, num_lineups=50, seed=42)
+    assert any(biggest_stack(tiny_pool, lineup) < 3 for lineup in loose.tolist())
+
+
+def test_stacks_spread_across_teams(tiny_pool: PlayerPool, tiny_spec: RosterSpec) -> None:
+    # The reason the target is redrawn per attempt. A builder that answered
+    # "which team?" once would return a portfolio stacked entirely on one team.
+    spec = replace(tiny_spec, groups=(GroupConstraint(key="team", min_stack=3),))
+    lineups = build_lineups(tiny_pool, spec, num_lineups=60, seed=43)
+    assert len(lineups) > 5
+    stacked = set()
+    for lineup in lineups.tolist():
+        counts: dict[int, int] = {}
+        for p in lineup:
+            key = int(tiny_pool.keys["team"][p])
+            counts[key] = counts.get(key, 0) + 1
+        stacked.add(max(counts, key=lambda k: counts[k]))
+    assert len(stacked) > 1, f"every lineup stacked the same team: {stacked}"
+
+
+def test_a_stack_the_pool_cannot_supply_returns_nothing(tiny_spec: RosterSpec) -> None:
+    # Every player on their own team, so no team has a second player. The roster
+    # has room for the stack; the pool simply cannot supply it.
+    records = [{**r, "team": f"T{i}"} for i, r in enumerate(make_records())]
+    pool = PlayerPool.from_records(records, tiny_spec)
+    spec = replace(tiny_spec, groups=(GroupConstraint(key="team", min_stack=2),))
+    assert len(build_lineups(pool, spec, num_lineups=20, seed=43)) == 0
+
+
+def test_a_stack_and_a_cap_coexist(tiny_pool: PlayerPool, tiny_spec: RosterSpec) -> None:
+    # The shape a real MLB spec has: stack four hitters from a team, and never
+    # more than five from any one.
+    spec = replace(
+        tiny_spec,
+        groups=(GroupConstraint(key="team", max_count=3, min_stack=3),),
+    )
+    lineups = build_lineups(tiny_pool, spec, num_lineups=40, seed=44)
+    assert len(lineups) > 0
+    for lineup in lineups.tolist():
+        assert biggest_stack(tiny_pool, lineup) == 3
+
+
+def test_a_stack_and_a_distinct_minimum_hold_together(
+    tiny_pool: PlayerPool, tiny_spec: RosterSpec
+) -> None:
+    # They pull in opposite directions: one concentrates, the other spreads.
+    spec = replace(
+        tiny_spec,
+        groups=(
+            GroupConstraint(key="team", min_stack=2),
+            GroupConstraint(key="team", min_distinct=3),
+        ),
+    )
+    lineups = build_lineups(tiny_pool, spec, num_lineups=40, seed=45)
+    assert len(lineups) > 0
+    for lineup in lineups.tolist():
+        assert biggest_stack(tiny_pool, lineup) >= 2
+        assert distinct_teams(tiny_pool, lineup) >= 3
+
+
+def test_minimums_survive_a_salary_floor(tiny_pool: PlayerPool, tiny_spec: RosterSpec) -> None:
+    spec = replace(
+        tiny_spec,
+        salary_cap=22_000,
+        salary_floor=20_000,
+        groups=(
+            GroupConstraint(key="team", min_stack=2),
+            GroupConstraint(key="team", min_distinct=2),
+        ),
+    )
+    lineups = build_lineups(tiny_pool, spec, num_lineups=40, seed=46)
+    assert len(lineups) > 0, "repair recovered nothing to check"
+    for lineup in lineups.tolist():
+        assert biggest_stack(tiny_pool, lineup) >= 2
+        assert distinct_teams(tiny_pool, lineup) >= 2
+
+
+def test_minimums_are_deterministic(tiny_pool: PlayerPool, tiny_spec: RosterSpec) -> None:
+    # The stack target is drawn from the same generator as the jitter, so the
+    # output must stay a function of the seed alone.
+    spec = replace(tiny_spec, groups=(GroupConstraint(key="team", min_stack=3),))
+    assert np.array_equal(
+        build_lineups(tiny_pool, spec, num_lineups=40, seed=47),
+        build_lineups(tiny_pool, spec, num_lineups=40, seed=47),
+    )
+
+
+def test_minimums_compose_with_locks_and_exposure(
+    tiny_pool: PlayerPool, tiny_spec: RosterSpec
+) -> None:
+    spec = replace(tiny_spec, groups=(GroupConstraint(key="team", min_distinct=3),))
+    lineups = build_lineups(
+        tiny_pool, spec, num_lineups=30, seed=48, locks=[9], max_exposure={16: 0.3}
+    )
+    assert len(lineups) > 0
+    for lineup in lineups.tolist():
+        assert 9 in lineup
+        assert distinct_teams(tiny_pool, lineup) >= 3
+    assert sum(16 in lineup for lineup in lineups.tolist()) <= 9

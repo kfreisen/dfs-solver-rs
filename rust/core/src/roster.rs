@@ -191,10 +191,81 @@ impl ConflictGraph {
 pub struct GroupConstraint {
     /// Index into [`RosterSpec::key_columns`] naming the key this counts.
     pub key_column: usize,
-    /// Maximum number of players sharing one key value.
+    /// Maximum number of players sharing one key value. [`UNCAPPED`] for a
+    /// constraint that only imposes a minimum.
     pub max_count: u32,
-    /// Which slot groups count toward this cap, as a bitmask over slot-group index.
+    /// How many *distinct* values of the key must appear. Zero imposes nothing.
+    ///
+    /// This is the shape behind "players from at least two different games",
+    /// which most classic contests require and which a cap cannot express: a cap
+    /// bounds one key value, while this counts how many are used at all.
+    ///
+    /// See [`Self::min_stack`] for the other, quite different, minimum.
+    pub min_distinct: u32,
+    /// How many players at least one key value must contribute: a stack.
+    ///
+    /// "At least four hitters from one team" — existential over teams, which is
+    /// what separates it from everything else here. A cap and a distinct-minimum
+    /// are both properties a finished lineup either has or does not, testable one
+    /// player at a time. This one is a property of a *choice*: the builder has to
+    /// decide which team it is stacking before it can act on it, because the
+    /// constraint says nothing about which team should be the one.
+    ///
+    /// That choice is drawn per attempt from the same generator as the jitter, so
+    /// a portfolio ends up stacked across many teams rather than piling onto one.
+    /// See `greedy::Builder::choose_stack_targets`.
+    ///
+    /// This is a strategy rather than a rule an operator enforces. It lives here
+    /// anyway because it is the single most common thing a daily-fantasy builder
+    /// is asked to do, and expressing it any other way means post-filtering a
+    /// pool that was never built to contain it.
+    pub min_stack: u32,
+    /// Which slot groups count toward this constraint, as a bitmask over
+    /// slot-group index.
     pub slots: SlotMask,
+}
+
+/// A `max_count` that imposes no ceiling, for a minimum-only constraint.
+pub const UNCAPPED: u32 = u32::MAX;
+
+impl GroupConstraint {
+    /// A plain cap: at most `max_count` players sharing a key value.
+    pub fn at_most(key_column: usize, max_count: u32, slots: SlotMask) -> Self {
+        Self {
+            key_column,
+            max_count,
+            min_distinct: 0,
+            min_stack: 0,
+            slots,
+        }
+    }
+
+    /// A requirement that at least `min_distinct` values of the key be used.
+    pub fn distinct(key_column: usize, min_distinct: u32, slots: SlotMask) -> Self {
+        Self {
+            key_column,
+            max_count: UNCAPPED,
+            min_distinct,
+            min_stack: 0,
+            slots,
+        }
+    }
+
+    /// A requirement that some one key value contribute `min_stack` players.
+    pub fn stack(key_column: usize, min_stack: u32, slots: SlotMask) -> Self {
+        Self {
+            key_column,
+            max_count: UNCAPPED,
+            min_distinct: 0,
+            min_stack,
+            slots,
+        }
+    }
+
+    /// Whether this constraint imposes anything at all.
+    pub fn is_inert(&self) -> bool {
+        self.max_count == UNCAPPED && self.min_distinct == 0 && self.min_stack == 0
+    }
 }
 
 /// Everything that makes a lineup legal, independent of any sport.
@@ -244,6 +315,20 @@ pub enum SpecError {
         expected: usize,
     },
     ZeroMaxCount(usize),
+    InertGroup(usize),
+    /// A minimum asks for more players than the slots it counts can hold.
+    MinimumExceedsSlots {
+        group: usize,
+        which: &'static str,
+        wanted: u32,
+        slots: usize,
+    },
+    /// A stack minimum is larger than the cap on the same key.
+    StackAboveCap {
+        group: usize,
+        min_stack: u32,
+        max_count: u32,
+    },
     BadMultiplier {
         slot: usize,
         which: &'static str,
@@ -291,6 +376,30 @@ impl std::fmt::Display for SpecError {
                 f,
                 "group constraint {i} has max_count 0, which forbids every lineup; \
                  exclude those players from the pool instead"
+            ),
+            Self::InertGroup(i) => write!(
+                f,
+                "group constraint {i} sets no cap, no distinct minimum and no stack, \
+                 so it constrains nothing; remove it"
+            ),
+            Self::MinimumExceedsSlots {
+                group,
+                which,
+                wanted,
+                slots,
+            } => write!(
+                f,
+                "group constraint {group} requires {which} {wanted} but counts only \
+                 {slots} roster slot(s), so no lineup can satisfy it"
+            ),
+            Self::StackAboveCap {
+                group,
+                min_stack,
+                max_count,
+            } => write!(
+                f,
+                "group constraint {group} requires a stack of {min_stack} but caps the \
+                 same key at {max_count}; those cannot both hold"
             ),
             Self::BadMultiplier { slot, which, value } => write!(
                 f,
@@ -384,6 +493,33 @@ impl RosterSpec {
             if group.max_count == 0 {
                 return Err(SpecError::ZeroMaxCount(i));
             }
+            if group.is_inert() {
+                return Err(SpecError::InertGroup(i));
+            }
+            // How many roster slots this constraint actually counts. A minimum
+            // asking for more than that can never be met, and would otherwise
+            // burn the entire attempt budget proving it.
+            let counted = self.counted_slots(group.slots);
+            for (which, wanted) in [
+                ("min_distinct", group.min_distinct),
+                ("min_stack", group.min_stack),
+            ] {
+                if wanted as usize > counted {
+                    return Err(SpecError::MinimumExceedsSlots {
+                        group: i,
+                        which,
+                        wanted,
+                        slots: counted,
+                    });
+                }
+            }
+            if group.min_stack > group.max_count {
+                return Err(SpecError::StackAboveCap {
+                    group: i,
+                    min_stack: group.min_stack,
+                    max_count: group.max_count,
+                });
+            }
         }
         Ok(())
     }
@@ -412,6 +548,52 @@ impl RosterSpec {
         table
     }
 
+    /// How many roster slots a slot mask covers, expanding multi-count groups.
+    pub fn counted_slots(&self, mask: SlotMask) -> usize {
+        self.slots
+            .iter()
+            .enumerate()
+            .filter(|(j, _)| mask & (1u64 << j) != 0)
+            .map(|(_, slot)| slot.count)
+            .sum()
+    }
+
+    /// `[g][j]` is how many roster slots constraint `g` still counts from slot
+    /// group `j` onward, as a flat `(n_groups, n_slot_groups + 1)` table.
+    ///
+    /// This is what makes a distinct-minimum enforceable during a forward fill
+    /// rather than only checkable at the end. Knowing how many counted slots are
+    /// left is what lets the builder tell "this pick is fine" from "this pick
+    /// strands the requirement", and reject the second before it has wasted the
+    /// rest of the attempt.
+    pub fn counted_suffix(&self) -> Vec<usize> {
+        let width = self.slots.len() + 1;
+        let mut table = vec![0usize; self.groups.len() * width];
+        for (gi, group) in self.groups.iter().enumerate() {
+            for j in (0..self.slots.len()).rev() {
+                let here = if group.slots & (1u64 << j) != 0 {
+                    self.slots[j].count
+                } else {
+                    0
+                };
+                table[gi * width + j] = table[gi * width + j + 1] + here;
+            }
+        }
+        table
+    }
+
+    /// Whether any constraint imposes a minimum, of either kind.
+    pub fn has_minimums(&self) -> bool {
+        self.groups
+            .iter()
+            .any(|g| g.min_distinct > 0 || g.min_stack > 0)
+    }
+
+    /// Whether any constraint asks for a stack.
+    pub fn has_stacks(&self) -> bool {
+        self.groups.iter().any(|g| g.min_stack > 0)
+    }
+
     /// Whether any slot scales salary. Lets a caller skip work that only matters
     /// for showdown-style rosters.
     pub fn has_salary_multipliers(&self) -> bool {
@@ -437,6 +619,10 @@ pub struct GroupTally<'a> {
     spec: &'a RosterSpec,
     n_keys: usize,
     counts: Vec<u32>,
+    /// How many distinct key values each constraint currently sees. Maintained
+    /// incrementally on the 0↔1 transitions rather than recounted, because the
+    /// feasibility test below runs per candidate examined.
+    distinct: Vec<u32>,
 }
 
 impl<'a> GroupTally<'a> {
@@ -447,12 +633,62 @@ impl<'a> GroupTally<'a> {
             spec,
             n_keys,
             counts: vec![0; spec.groups.len() * n_keys],
+            distinct: vec![0; spec.groups.len()],
         }
     }
 
     /// Zero every count, keeping the allocation.
     pub fn reset(&mut self) {
         self.counts.fill(0);
+        self.distinct.fill(0);
+    }
+
+    /// How many distinct key values constraint `group_index` currently sees.
+    pub fn distinct_count(&self, group_index: usize) -> u32 {
+        self.distinct[group_index]
+    }
+
+    /// How many players constraint `group_index` has counted for `key`.
+    pub fn count_of(&self, group_index: usize, key: i32) -> u32 {
+        if key < 0 {
+            return 0;
+        }
+        self.counts[group_index * self.n_keys + key as usize]
+    }
+
+    /// The largest number of players any one key value has contributed to
+    /// constraint `group_index` — the size of its biggest stack.
+    ///
+    /// Scanned rather than maintained incrementally. A running maximum is wrong
+    /// the moment salary repair removes a player, and this is checked once per
+    /// finished lineup rather than once per candidate.
+    pub fn max_stack(&self, group_index: usize) -> u32 {
+        let start = group_index * self.n_keys;
+        self.counts[start..start + self.n_keys]
+            .iter()
+            .copied()
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// The key value `player` carries for constraint `group_index`, or `-1` if
+    /// they belong to no group under it.
+    pub fn key_of(&self, group_index: usize, player: usize) -> i32 {
+        self.spec.key_columns[self.spec.groups[group_index].key_column][player]
+    }
+
+    /// Whether placing `player` into `slot_group` would introduce a key value
+    /// that constraint `group_index` has not seen yet.
+    pub fn is_new_key(&self, group_index: usize, player: usize, slot_group: usize) -> bool {
+        let group = &self.spec.groups[group_index];
+        if group.slots & (1u64 << slot_group) == 0 {
+            return false;
+        }
+        let key = self.spec.key_columns[group.key_column][player];
+        if key < 0 {
+            return false;
+        }
+        self.counts[group_index * self.n_keys + key as usize] == 0
     }
 
     /// Whether adding `player` into slot group `slot_group` would breach a cap.
@@ -493,7 +729,14 @@ impl<'a> GroupTally<'a> {
                 continue;
             }
             let cell = &mut self.counts[gi * self.n_keys + key as usize];
+            let before = *cell;
             *cell = cell.wrapping_add_signed(delta);
+            // Only the transitions in and out of zero move the distinct count.
+            if before == 0 && *cell > 0 {
+                self.distinct[gi] += 1;
+            } else if before > 0 && *cell == 0 {
+                self.distinct[gi] -= 1;
+            }
         }
     }
 }
@@ -534,16 +777,8 @@ mod tests {
             salary_cap: 50_000,
             salary_floor: 49_000,
             groups: vec![
-                GroupConstraint {
-                    key_column: 0,
-                    max_count: 6,
-                    slots: all_slots,
-                },
-                GroupConstraint {
-                    key_column: 0,
-                    max_count: 5,
-                    slots: hitter_slots,
-                },
+                GroupConstraint::at_most(0, 6, all_slots),
+                GroupConstraint::at_most(0, 5, hitter_slots),
             ],
             key_columns: vec![team_ids],
             conflicts: ConflictGraph::none(),
