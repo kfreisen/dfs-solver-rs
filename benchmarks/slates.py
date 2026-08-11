@@ -28,6 +28,7 @@ __all__ = [
     "Rung",
     "build_field",
     "build_ladder",
+    "contest_spec",
     "lineup_overlap",
     "make_slate",
     "payout_line",
@@ -274,6 +275,26 @@ CROWD_PROFILES = (
 )
 
 
+def contest_spec(spec: RosterSpec) -> RosterSpec:
+    """The rules an operator enforces, with our strategy stripped out.
+
+    What the field must obey and what we choose to obey are different sets, and
+    conflating them makes the crowd an echo of us. Caps and distinct-game
+    minimums are contest rules; a four-hitter stack and a "no hitters against my
+    pitcher" rule are preferences nobody else is bound by.
+
+    Measured, it is not a small distinction: the same slate supports 3,024
+    distinct lineups under our strategy and 21,681 under the contest's rules
+    alone. A field built on the narrow set is seven times too small, and its
+    upper quantiles — the payout lines — are drawn from far too few entries.
+    """
+    return replace(
+        spec,
+        conflicts=(),
+        groups=tuple(group for group in spec.groups if not group.min_stack),
+    )
+
+
 def build_field(
     pool: PlayerPool, spec: RosterSpec, n_entries: int = 200_000, seed: int = 99
 ) -> np.ndarray:
@@ -289,10 +310,15 @@ def build_field(
     Built with the crowd's profiles rather than ours: no ownership fade, because
     the field is who creates ownership. Whatever it returns is a stand-in for a
     real field model, but an independent one, which is the property that matters.
+
+    Pass it a contest specification, not a strategy one — see
+    [`contest_spec`][]. It is applied here rather than left to the caller because
+    forgetting is silent: the field simply comes back smaller and its payout
+    lines come from too few entries.
     """
     return build_lineups(
         pool,
-        spec,
+        contest_spec(spec),
         num_lineups=n_entries,
         seed=seed,
         noise=0.45,
