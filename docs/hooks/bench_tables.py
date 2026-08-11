@@ -35,11 +35,15 @@ def latest_results() -> list[dict[str, Any]]:
     for hw_dir in sorted(results_dir.iterdir()):
         if not hw_dir.is_dir():
             continue
-        files = sorted(hw_dir.glob("*.json"))
-        if not files:
+        results = [json.loads(f.read_text(encoding="utf-8")) for f in hw_dir.glob("*.json")]
+        if not results:
             continue
-        # Filenames lead with an ISO date, so lexical order is chronological.
-        newest.append(json.loads(files[-1].read_text(encoding="utf-8")))
+        # Ordered by the timestamp inside the file, not by filename. Filenames
+        # lead with an ISO date and *end* with a commit sha, so two runs on the
+        # same day sort by sha — which is arbitrary. That silently published a
+        # superseded result: `2026-08-11-1244693` lost to the older
+        # `2026-08-11-cd3076c` because "1" sorts before "c".
+        newest.append(max(results, key=lambda r: r["timestamp"]))
     return newest
 
 

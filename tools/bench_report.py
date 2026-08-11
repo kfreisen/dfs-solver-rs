@@ -211,6 +211,36 @@ def readme_summary(report: dict[str, Any]) -> str:
         "",
     ]
 
+    # Timed pipeline cases only. The head-to-head case shares the prefix, carries
+    # a differently shaped `quality` bag and is not a timing, so including it
+    # here would overwrite the row it is meant to summarize.
+    pipeline = {
+        c["impl"]: c
+        for c in report["cases"]
+        if c["name"].startswith("pipeline/")
+        and c.get("quality")
+        and c.get("metric", "seconds") == "seconds"
+    }
+    ours, solver = pipeline.get("slatekit_rust"), pipeline.get("milp_ortools_cpsat")
+    if ours and solver:
+        detail = ours.get("detail", "")
+        lines += [
+            f"**The whole job, both ways.** {detail}. The solver's entries are "
+            "individually perfect — they are the top lineups by projection — and "
+            "the portfolio they form is worse, because lineups differing by one "
+            "player win and lose together.",
+            "",
+            "| | Time | Median entry vs optimum | Overlap between entries | In the money |",
+            "| --- | ---: | ---: | ---: | ---: |",
+        ]
+        for label, case in (("This package", ours), ("Solver + no-good cuts", solver)):
+            q = case["quality"]
+            lines.append(
+                f"| {label} | {case['median']:.2f} s | {q['median_ratio']:.0%} | "
+                f"{q['overlap']:.0%} | **{q['p_in_the_money']:.0%}** |"
+            )
+        lines.append("")
+
     ladder = [c for c in report["cases"] if c["name"].startswith("constraints/")]
     if ladder:
         by_case: dict[str, dict[str, dict[str, Any]]] = {}
