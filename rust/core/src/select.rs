@@ -57,13 +57,22 @@
 //!
 //! # Where the line comes from
 //!
-//! Every objective takes a score, and it is deliberately a *constant* rather
-//! than a quantile of the portfolio's own distribution. "Mean of the top q
-//! outcomes" sounds more principled and is not submodular — which outcomes count
-//! would depend on the set being chosen — so the guarantee above, and lazy
-//! evaluation with it, would be lost. Compute the line up front from whatever
-//! you know about the field ([`quantile`] does it from the candidate pool) and
-//! hand it in.
+//! Every objective needs a score to beat, and it is **per outcome**, not a
+//! constant. That distinction is the difference between measuring a lineup and
+//! measuring the weather. On a realistic slate the field's median score swings
+//! about six times as much between simulated outcomes as lineups do within one,
+//! so against a fixed bar "did this cash?" correlates 0.98 with "was the slate
+//! high-scoring" — and that is no edge, because every rival lineup scored more
+//! in those worlds too. Measured: switching a tournament selection from a
+//! constant to a per-outcome line reached full coverage with 55 entries where
+//! the constant needed 150 and still fell short.
+//!
+//! The line is fixed *before* selection runs rather than derived from the
+//! portfolio as it grows. A "mean of the top q outcomes" objective sounds more
+//! principled and is not submodular — which outcomes count would depend on the
+//! set being chosen — so the guarantee above, and lazy evaluation with it, would
+//! be lost. Compute it from whatever you know about the field and hand it in;
+//! [`quantile`] will read one off a score matrix if you have nothing better.
 
 use std::collections::BinaryHeap;
 
@@ -149,6 +158,8 @@ pub enum SelectError {
     RaggedRosters { len: usize, roster_size: usize },
     /// The roster matrix and the score matrix describe different pools.
     CandidateCountMismatch { rosters: usize, scores: usize },
+    /// The line has neither one entry nor one per outcome.
+    LineLengthMismatch { len: usize, n_outcomes: usize },
 }
 
 impl std::fmt::Display for SelectError {
@@ -173,6 +184,11 @@ impl std::fmt::Display for SelectError {
                 f,
                 "the roster matrix describes {rosters} lineups but the score matrix \
                  describes {scores}"
+            ),
+            Self::LineLengthMismatch { len, n_outcomes } => write!(
+                f,
+                "the line has {len} entries; expected one per outcome ({n_outcomes}) \
+                 or a single value to broadcast"
             ),
         }
     }
@@ -207,35 +223,37 @@ impl std::error::Error for SelectError {}
 /// rather than one that pays a lump for finishing in the money.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Objective {
-    /// Mean excess of the portfolio's best entry over `threshold`.
-    ///
-    /// The general-purpose choice, and the one the prior art used with
-    /// `threshold = 0`.
-    Excess { threshold: f32 },
-    /// Fraction of outcomes in which some entry reaches `line`. Tournaments.
-    Cover { line: f32 },
-    /// Mean probability that an entry reaches `line`, judged independently.
+    /// Mean excess of the portfolio's best entry over the line.
+    Excess,
+    /// Fraction of outcomes in which some entry reaches the line. Tournaments.
+    Cover,
+    /// Mean probability that an entry reaches the line, judged independently.
     /// Cash games.
-    Cash { line: f32 },
+    Cash,
 }
 
 impl Objective {
     /// The marginal value of adding `scores` to a portfolio whose per-outcome
     /// state is `bar`. Not yet divided by the outcome count.
-    fn gain(&self, scores: &[f32], bar: &[f32]) -> f32 {
-        match *self {
-            Self::Excess { .. } => sum_excess_over(scores, bar),
-            // An outcome counts only if this entry clears the line and the
-            // portfolio does not already have one that does.
-            Self::Cover { line } => scores[..bar.len()]
+    fn gain(&self, scores: &[f32], bar: &[f32], line: &[f32]) -> f32 {
+        match self {
+            // `bar` is floored at the line, so this needs no separate reference
+            // to it.
+            Self::Excess => sum_excess_over(scores, bar),
+            // An outcome counts only if this entry clears *that outcome's* line
+            // and the portfolio does not already have one that does.
+            Self::Cover => scores[..bar.len()]
                 .iter()
                 .zip(bar)
-                .filter(|&(&s, &b)| s >= line && b < line)
+                .zip(line)
+                .filter(|&((&s, &b), &l)| s >= l && b < l)
                 .count() as f32,
             // No reference to `bar` at all: that is what makes cash modular.
-            Self::Cash { line } => {
-                scores[..bar.len()].iter().filter(|&&s| s >= line).count() as f32
-            }
+            Self::Cash => scores[..line.len()]
+                .iter()
+                .zip(line)
+                .filter(|&(&s, &l)| s >= l)
+                .count() as f32,
         }
     }
 
@@ -244,19 +262,19 @@ impl Objective {
         match self {
             // Cash entries do not interact, so the state never moves and every
             // candidate's gain stays what it was. Greedy then simply ranks.
-            Self::Cash { .. } => {}
+            Self::Cash => {}
             _ => raise_to(bar, scores),
         }
     }
 
     /// The per-outcome state before anything is chosen.
-    fn floor(&self) -> f32 {
-        match *self {
-            Self::Excess { threshold } => threshold,
-            // Any value below the line means "not yet covered"; the line itself
+    fn floor(&self, line: &[f32]) -> Vec<f32> {
+        match self {
+            Self::Excess => line.to_vec(),
+            // Anything under the line means "not yet covered"; the line itself
             // would wrongly read as covered.
-            Self::Cover { line } => line - 1.0,
-            Self::Cash { .. } => f32::NEG_INFINITY,
+            Self::Cover => line.iter().map(|&l| l - 1.0).collect(),
+            Self::Cash => vec![f32::NEG_INFINITY; line.len()],
         }
     }
 }
@@ -269,6 +287,20 @@ pub struct SelectConfig {
     pub n_select: usize,
     /// What the portfolio is optimized for.
     pub objective: Objective,
+    /// The score that has to be beaten, per outcome.
+    ///
+    /// A vector rather than a constant, and that is the whole point. The field's
+    /// score swings enormously between simulated outcomes — on a realistic slate
+    /// the median lineup's score varies by six times as much across outcomes as
+    /// lineups vary within one. Against a fixed line, "did this lineup cash?" is
+    /// then 98% a question about whether the slate was high-scoring, which is no
+    /// edge at all: everyone else scores more in those worlds too. Beating the
+    /// field *in the same world* is what pays.
+    ///
+    /// Length must match the outcome count, or be 1 to broadcast a constant —
+    /// which is only right when the line genuinely does not move, as with a
+    /// plain portfolio maximum at zero.
+    pub line: Vec<f32>,
     /// Per-player ceiling on how many selected lineups may contain that player.
     /// Empty means uncapped.
     ///
@@ -287,7 +319,8 @@ impl Default for SelectConfig {
     fn default() -> Self {
         Self {
             n_select: 150,
-            objective: Objective::Excess { threshold: 0.0 },
+            objective: Objective::Excess,
+            line: vec![0.0],
             exposure_limits: Vec::new(),
             min_gain: 0.0,
         }
@@ -369,6 +402,15 @@ impl Candidates<'_> {
     }
 }
 
+/// Expand a line to one value per outcome, accepting a single value as constant.
+fn broadcast_line(line: &[f32], n_outcomes: usize) -> Result<Vec<f32>, SelectError> {
+    match line.len() {
+        1 => Ok(vec![line[0]; n_outcomes]),
+        n if n == n_outcomes => Ok(line.to_vec()),
+        n => Err(SelectError::LineLengthMismatch { len: n, n_outcomes }),
+    }
+}
+
 /// A candidate's most recent gain, ordered for the lazy-greedy heap.
 ///
 /// `f32` is not `Ord`, and the ordering has to be total for a heap to be
@@ -416,14 +458,18 @@ pub fn select_portfolio(
 
     let capping = !config.exposure_limits.is_empty();
     let mut appearances = vec![0u32; config.exposure_limits.len()];
-    let mut bar = vec![config.objective.floor(); candidates.n_outcomes];
+    let line = broadcast_line(&config.line, candidates.n_outcomes)?;
+    let mut bar = config.objective.floor(&line);
     let inverse = 1.0 / candidates.n_outcomes as f32;
 
     // Seed the heap with every candidate's standalone gain. These are upper
     // bounds from here on: the bar only rises, so no gain can grow.
     let mut heap: BinaryHeap<Entry> = (0..n)
         .map(|candidate| Entry {
-            gain: config.objective.gain(candidates.row(candidate), &bar) * inverse,
+            gain: config
+                .objective
+                .gain(candidates.row(candidate), &bar, &line)
+                * inverse,
             candidate,
         })
         .collect();
@@ -456,7 +502,10 @@ pub fn select_portfolio(
                 continue;
             }
             let fresh = Entry {
-                gain: config.objective.gain(candidates.row(entry.candidate), &bar) * inverse,
+                gain: config
+                    .objective
+                    .gain(candidates.row(entry.candidate), &bar, &line)
+                    * inverse,
                 candidate: entry.candidate,
             };
             // Still at least as good as the best remaining *bound*, so nothing
@@ -566,7 +615,8 @@ pub fn select_portfolio_naive(
 
     let capping = !config.exposure_limits.is_empty();
     let mut appearances = vec![0u32; config.exposure_limits.len()];
-    let mut bar = vec![config.objective.floor(); candidates.n_outcomes];
+    let line = broadcast_line(&config.line, candidates.n_outcomes)?;
+    let mut bar = config.objective.floor(&line);
     let inverse = 1.0 / candidates.n_outcomes as f32;
     let mut taken = vec![false; n];
     let mut chosen: Vec<u32> = Vec::new();
@@ -585,7 +635,10 @@ pub fn select_portfolio_naive(
             {
                 continue;
             }
-            let gain = config.objective.gain(candidates.row(candidate), &bar) * inverse;
+            let gain = config
+                .objective
+                .gain(candidates.row(candidate), &bar, &line)
+                * inverse;
             let entry = Entry { gain, candidate };
             if best.is_none_or(|current| entry > current) {
                 best = Some(entry);
@@ -738,7 +791,8 @@ mod tests {
         let scores = pool();
         let config = SelectConfig {
             n_select: 1,
-            objective: Objective::Excess { threshold: 20.0 },
+            objective: Objective::Excess,
+            line: vec![20.0],
             ..SelectConfig::default()
         };
         assert_eq!(
@@ -1002,7 +1056,8 @@ mod tests {
         let scores = contest_pool();
         let config = SelectConfig {
             n_select: 2,
-            objective: Objective::Cash { line: 100.0 },
+            objective: Objective::Cash,
+            line: vec![100.0],
             ..SelectConfig::default()
         };
         assert_eq!(
@@ -1019,7 +1074,8 @@ mod tests {
         let scores = contest_pool();
         let config = SelectConfig {
             n_select: 2,
-            objective: Objective::Cash { line: 100.0 },
+            objective: Objective::Cash,
+            line: vec![100.0],
             ..SelectConfig::default()
         };
         let chosen = select_portfolio(&contest_candidates(&scores), &config).unwrap();
@@ -1033,11 +1089,12 @@ mod tests {
         // rather than a (1 - 1/e) approximation.
         let scores = contest_pool();
         let pool = contest_candidates(&scores);
-        let objective = Objective::Cash { line: 100.0 };
-        let mut bar = vec![objective.floor(); 8];
-        let before = objective.gain(pool.row(2), &bar);
+        let objective = Objective::Cash;
+        let line = vec![100.0f32; 8];
+        let mut bar = objective.floor(&line);
+        let before = objective.gain(pool.row(2), &bar, &line);
         objective.absorb(&mut bar, pool.row(0));
-        assert_eq!(objective.gain(pool.row(2), &bar), before);
+        assert_eq!(objective.gain(pool.row(2), &bar, &line), before);
     }
 
     #[test]
@@ -1047,7 +1104,8 @@ mod tests {
         let scores = contest_pool();
         let config = SelectConfig {
             n_select: 1,
-            objective: Objective::Cover { line: 200.0 },
+            objective: Objective::Cover,
+            line: vec![200.0],
             ..SelectConfig::default()
         };
         assert_eq!(
@@ -1063,7 +1121,8 @@ mod tests {
         let scores = contest_pool();
         let config = SelectConfig {
             n_select: 4,
-            objective: Objective::Cover { line: 200.0 },
+            objective: Objective::Cover,
+            line: vec![200.0],
             ..SelectConfig::default()
         };
         assert_eq!(
@@ -1082,7 +1141,8 @@ mod tests {
             &pool,
             &SelectConfig {
                 n_select: 1,
-                objective: Objective::Cash { line: 100.0 },
+                objective: Objective::Cash,
+                line: vec![100.0],
                 ..SelectConfig::default()
             },
         )
@@ -1091,7 +1151,8 @@ mod tests {
             &pool,
             &SelectConfig {
                 n_select: 1,
-                objective: Objective::Cover { line: 200.0 },
+                objective: Objective::Cover,
+                line: vec![200.0],
                 ..SelectConfig::default()
             },
         )
@@ -1104,12 +1165,13 @@ mod tests {
         // Two of eight outcomes cleared, so a portfolio value of 0.25.
         let scores = contest_pool();
         let pool = contest_candidates(&scores);
-        let objective = Objective::Cover { line: 200.0 };
-        let mut bar = vec![objective.floor(); 8];
-        let gain = objective.gain(pool.row(1), &bar) / 8.0;
+        let objective = Objective::Cover;
+        let line = vec![200.0f32; 8];
+        let mut bar = objective.floor(&line);
+        let gain = objective.gain(pool.row(1), &bar, &line) / 8.0;
         assert_eq!(gain, 0.25);
         objective.absorb(&mut bar, pool.row(1));
-        assert_eq!(objective.gain(pool.row(3), &bar), 0.0);
+        assert_eq!(objective.gain(pool.row(3), &bar, &line), 0.0);
     }
 
     #[test]
@@ -1121,9 +1183,10 @@ mod tests {
             rosters: &[],
             roster_size: 0,
         };
-        let objective = Objective::Cover { line: 100.0 };
-        let bar = vec![objective.floor(); 2];
-        assert_eq!(objective.gain(pool.row(0), &bar), 1.0);
+        let objective = Objective::Cover;
+        let line = vec![100.0f32; 2];
+        let bar = objective.floor(&line);
+        assert_eq!(objective.gain(pool.row(0), &bar, &line), 1.0);
     }
 
     #[test]
@@ -1132,11 +1195,11 @@ mod tests {
         use rand_xoshiro::Xoshiro256PlusPlus;
 
         let mut rng = Xoshiro256PlusPlus::seed_from_u64(0xA11CE);
-        for objective in [
-            Objective::Excess { threshold: 0.0 },
-            Objective::Excess { threshold: 50.0 },
-            Objective::Cover { line: 60.0 },
-            Objective::Cash { line: 40.0 },
+        for (objective, line) in [
+            (Objective::Excess, vec![0.0f32]),
+            (Objective::Excess, vec![50.0]),
+            (Objective::Cover, vec![60.0]),
+            (Objective::Cash, vec![40.0]),
         ] {
             for n_cand in [1usize, 4, 19] {
                 for n_outcomes in [1usize, 7, 24] {
@@ -1152,16 +1215,81 @@ mod tests {
                     let config = SelectConfig {
                         n_select: n_cand,
                         objective,
+                        line: line.clone(),
                         ..SelectConfig::default()
                     };
                     assert_eq!(
                         select_portfolio(&pool, &config).unwrap(),
                         select_portfolio_naive(&pool, &config).unwrap(),
-                        "{objective:?} n_cand={n_cand} n_outcomes={n_outcomes}"
+                        "{objective:?} line={line:?} n_cand={n_cand} n_outcomes={n_outcomes}"
                     );
                 }
             }
         }
+    }
+
+    #[test]
+    fn a_per_outcome_line_judges_the_lineup_rather_than_the_slate() {
+        // Two outcomes: the first is a high-scoring slate, the second a low one.
+        // Candidate 0 is mediocre but plays in the high-scoring world; candidate
+        // 1 is the standout of the low-scoring world.
+        //
+        // Against a constant line of 100 only candidate 0 registers, which is
+        // the failure this exists to prevent: it "cashed" because the slate was
+        // big, not because the lineup was good, and everyone else's lineup was
+        // big in that world too. Against a per-outcome line — the field's score
+        // in each world — candidate 1 is the one that beat its field.
+        let scores = [
+            120.0, 30.0, // candidate 0: rides the big slate, beats nobody
+            155.0, 45.0, // candidate 1: beats the field in both worlds
+        ];
+        let pool = Candidates {
+            scores: &scores,
+            n_outcomes: 2,
+            rosters: &[],
+            roster_size: 0,
+        };
+
+        // Against a fixed bar of 100 the two are indistinguishable: each clears
+        // it in the big outcome and neither does in the small one, so the choice
+        // falls to the tie-break. The bar has measured the slate, not the lineup.
+        let constant = SelectConfig {
+            n_select: 1,
+            objective: Objective::Cover,
+            line: vec![100.0],
+            ..SelectConfig::default()
+        };
+        assert_eq!(select_portfolio(&pool, &constant).unwrap(), [0]);
+
+        // The field scored 150 in the big world and 40 in the small one.
+        // Candidate 0 now beats it in neither; candidate 1 in both.
+        let per_outcome = SelectConfig {
+            n_select: 1,
+            objective: Objective::Cover,
+            line: vec![150.0, 40.0],
+            ..SelectConfig::default()
+        };
+        assert_eq!(
+            select_portfolio(&pool, &per_outcome).unwrap(),
+            [1],
+            "a per-outcome line should prefer the lineup that beat its field"
+        );
+    }
+
+    #[test]
+    fn a_line_of_the_wrong_length_is_rejected() {
+        let scores = pool();
+        let config = SelectConfig {
+            line: vec![1.0, 2.0, 3.0],
+            ..SelectConfig::default()
+        };
+        assert_eq!(
+            select_portfolio(&candidates(&scores), &config),
+            Err(SelectError::LineLengthMismatch {
+                len: 3,
+                n_outcomes: 4
+            })
+        );
     }
 
     #[test]
@@ -1236,6 +1364,10 @@ mod tests {
             SelectError::CandidateCountMismatch {
                 rosters: 1,
                 scores: 2,
+            },
+            SelectError::LineLengthMismatch {
+                len: 3,
+                n_outcomes: 4,
             },
         ];
         for error in errors {

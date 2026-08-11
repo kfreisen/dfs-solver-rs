@@ -47,7 +47,13 @@ if TYPE_CHECKING:
     from mlb_dfs_solver.pool import PlayerPool
     from mlb_dfs_solver.spec import RosterSpec
 
-__all__ = ["portfolio_value", "score_lineups", "select_portfolio", "tail_line"]
+__all__ = [
+    "field_line",
+    "portfolio_value",
+    "score_lineups",
+    "select_portfolio",
+    "tail_line",
+]
 
 _MODES = {
     # A cash game: each entry judged alone on its chance of clearing the line.
@@ -118,17 +124,49 @@ def score_lineups(
     )
 
 
+def field_line(sim_scores: np.ndarray, quantile: float = 0.99) -> np.ndarray:
+    """The score to beat *in each outcome*, taken across candidates.
+
+    This is almost always the line you want, and a single number almost always
+    is not. The field's score swings enormously between simulated outcomes: on a
+    realistic slate the median lineup varies about six times as much across
+    outcomes as lineups vary within one. Judged against a fixed bar, "did this
+    lineup cash?" then correlates 0.98 with "was the slate high-scoring" — which
+    is no edge at all, because everyone else scored more in those worlds too.
+    Beating the field *in the same world* is what pays.
+
+    Args:
+        sim_scores: An `(n_candidates, n_outcomes)` array from `score_lineups`.
+        quantile: Where in the field to draw the line. `0.5` is a cash game's
+            roughly-half-the-field; `0.99` is a tournament-winning score.
+
+    Returns:
+        One score per outcome.
+
+    A candidate pool is still a stand-in for the field — it is your lineups, not
+    the ones other people entered. If you have a field model, take its quantile
+    per outcome instead. But it is a far better stand-in than a constant.
+    """
+    if not 0.0 <= quantile <= 1.0:
+        msg = f"quantile must be in [0, 1], got {quantile}"
+        raise ValueError(msg)
+    scores = np.asarray(sim_scores)
+    if scores.ndim != 2:
+        msg = f"sim_scores must be two-dimensional, got shape {scores.shape}"
+        raise ValueError(msg)
+    if scores.size == 0:
+        return np.zeros(0, dtype=np.float32)
+    return np.asarray(np.quantile(scores, quantile, axis=0), dtype=np.float32)
+
+
 def tail_line(sim_scores: np.ndarray, quantile: float = 0.99) -> float:
-    """A score at the given quantile of a simulated distribution.
+    """A single score at the given quantile of a whole simulated distribution.
 
-    A starting point for the `line` the tournament mode needs. The 99th
-    percentile of what your own candidates produce is a rough stand-in for "a
-    score that wins".
-
-    It is only a stand-in, and worth being clear about why: the score that
-    actually wins is a property of the *field* — how many people entered, and
-    what they built — and your own candidate pool is not the field. If you have a
-    field model, take its quantile instead.
+    Kept for the case where the line genuinely does not move between outcomes.
+    For judging lineups against a field, reach for
+    [`field_line`][mlb_dfs_solver.select.field_line] instead — pooling every
+    outcome into one number mostly measures how high-scoring the slate was rather
+    than how good the lineup is.
     """
     if not 0.0 <= quantile <= 1.0:
         msg = f"quantile must be in [0, 1], got {quantile}"
@@ -143,7 +181,7 @@ def select_portfolio(
     sim_scores: np.ndarray,
     *,
     mode: str,
-    line: float,
+    line: float | np.ndarray,
     n_select: int = 150,
     lineups: np.ndarray | None = None,
     max_exposure: float | dict[int, float] | None = None,
@@ -157,9 +195,11 @@ def select_portfolio(
         mode: `"cash"`, `"gpp"`, or `"excess"`. See the module docstring — these
             are different objectives, not settings on one, and there is no
             default because the wrong one is confidently wrong.
-        line: The score that matters. For `"cash"` the cash line; for `"gpp"` a
-            winning score (see [`tail_line`][mlb_dfs_solver.select.tail_line]);
-            for `"excess"` a floor below which outcomes are worthless.
+        line: The score that has to be beaten. Either one value per outcome —
+            which is what you almost always want, see
+            [`field_line`][mlb_dfs_solver.select.field_line] — or a single number
+            broadcast across all of them, which is only right when the bar
+            genuinely does not move.
         n_select: How many entries to choose. Fewer come back when no remaining
             candidate improves the portfolio — in `"gpp"` mode especially, a pool
             can be exhausted well before this.
@@ -229,6 +269,14 @@ def select_portfolio(
             # cap below 100%.
             limits[player] = int(fraction * n_select)
 
+    line_values = np.ascontiguousarray(np.atleast_1d(np.asarray(line)), dtype=np.float32)
+    if line_values.ndim != 1 or line_values.size not in (1, scores.shape[1]):
+        msg = (
+            f"line has {line_values.size} entries; expected one per outcome "
+            f"({scores.shape[1]}) or a single value to broadcast"
+        )
+        raise ValueError(msg)
+
     chosen = _native.select_portfolio(
         scores.ravel(),
         int(scores.shape[1]),
@@ -237,7 +285,7 @@ def select_portfolio(
         limits,
         int(n_select),
         _MODES[mode],
-        float(line),
+        line_values,
         float(min_gain),
     )
     return np.asarray(chosen, dtype=np.int64)

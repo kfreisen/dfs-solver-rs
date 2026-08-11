@@ -13,6 +13,7 @@ import numpy as np
 import pytest
 from mlb_dfs_solver import (
     build_lineups,
+    field_line,
     portfolio_value,
     score_lineups,
     select_portfolio,
@@ -323,3 +324,71 @@ def test_min_gain_stops_early() -> None:
         dtype=np.float32,
     )
     assert len(select_portfolio(sim, mode="excess", line=0.0, n_select=3, min_gain=0.1)) == 2
+
+
+# --- The line ------------------------------------------------------------
+
+
+def test_field_line_is_per_outcome(tiny_pool: PlayerPool, tiny_spec: RosterSpec) -> None:
+    sim = np.array([[1.0, 10.0], [3.0, 30.0], [5.0, 50.0]], dtype=np.float32)
+    np.testing.assert_allclose(field_line(sim, 0.5), [3.0, 30.0])
+    assert field_line(sim, 0.5).shape == (2,)
+
+
+def test_field_line_tracks_the_slate_not_the_lineup(
+    tiny_pool: PlayerPool, tiny_spec: RosterSpec, candidates: np.ndarray, universe: np.ndarray
+) -> None:
+    """The bar has to move with the outcome, or it measures the wrong thing.
+
+    On a realistic slate the field's score varies far more between outcomes than
+    lineups vary within one, so a fixed bar mostly asks "was this a high-scoring
+    world?" — which is no edge, since every rival lineup scored more there too.
+    """
+    sim = score_lineups(tiny_pool, tiny_spec, candidates, universe)
+    per_outcome = field_line(sim, 0.5)
+    spread = float(per_outcome.max() - per_outcome.min())
+    within = float(np.median(sim.std(axis=0)))
+    assert spread > within, (
+        f"outcome-to-outcome spread {spread:.1f} should exceed the within-outcome "
+        f"lineup spread {within:.1f}, or a constant line would be harmless"
+    )
+
+
+def test_a_per_outcome_line_is_accepted(
+    tiny_pool: PlayerPool, tiny_spec: RosterSpec, candidates: np.ndarray, universe: np.ndarray
+) -> None:
+    sim = score_lineups(tiny_pool, tiny_spec, candidates, universe)
+    chosen = select_portfolio(sim, mode="gpp", line=field_line(sim, 0.9), n_select=20)
+    assert len(chosen) > 0
+
+
+def test_a_scalar_line_still_broadcasts(
+    tiny_pool: PlayerPool, tiny_spec: RosterSpec, candidates: np.ndarray, universe: np.ndarray
+) -> None:
+    # A constant is right when the bar genuinely does not move, so it stays legal.
+    sim = score_lineups(tiny_pool, tiny_spec, candidates, universe)
+    flat = select_portfolio(sim, mode="gpp", line=50.0, n_select=10)
+    vector = select_portfolio(sim, mode="gpp", line=np.full(sim.shape[1], 50.0), n_select=10)
+    np.testing.assert_array_equal(flat, vector)
+
+
+def test_a_line_of_the_wrong_length_is_rejected(
+    tiny_pool: PlayerPool, tiny_spec: RosterSpec, candidates: np.ndarray, universe: np.ndarray
+) -> None:
+    sim = score_lineups(tiny_pool, tiny_spec, candidates, universe)
+    with pytest.raises(ValueError, match="expected one per outcome"):
+        select_portfolio(sim, mode="gpp", line=np.zeros(3), n_select=5)
+
+
+def test_field_line_rejects_a_bad_quantile() -> None:
+    with pytest.raises(ValueError, match=r"in \[0, 1\]"):
+        field_line(np.ones((2, 2)), 1.5)
+
+
+def test_field_line_rejects_a_one_dimensional_matrix() -> None:
+    with pytest.raises(ValueError, match="two-dimensional"):
+        field_line(np.ones(4))
+
+
+def test_field_line_of_an_empty_matrix_is_empty() -> None:
+    assert field_line(np.empty((0, 0))).size == 0

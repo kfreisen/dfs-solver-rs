@@ -63,7 +63,7 @@ def select_portfolio(
     exposure_limits: np.ndarray,
     n_select: int,
     mode: str,
-    line: float,
+    line: np.ndarray,
     min_gain: float,
 ) -> np.ndarray:
     """Select a portfolio. Returns candidate indices in the order chosen."""

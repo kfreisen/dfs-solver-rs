@@ -27,6 +27,7 @@ import pytest
 from baselines.reference import build_lineups_reference, is_valid, validity_report
 from mlb_dfs_solver import (
     build_lineups,
+    field_line,
     portfolio_value,
     score_lineups,
     select_portfolio,
@@ -556,3 +557,23 @@ def test_portfolio_value_matches_the_reference(
     assert portfolio_value(sim, chosen) == pytest.approx(
         portfolio_value_reference(sim, chosen), rel=1e-5
     )
+
+
+def test_selection_matches_the_reference_with_a_per_outcome_line(
+    tiny_pool: PlayerPool, tiny_spec: RosterSpec
+) -> None:
+    """A per-outcome line is the normal case, so parity has to cover it.
+
+    A constant line is a special case that happens to broadcast; testing only
+    that would leave the path everyone actually uses unchecked.
+    """
+    from baselines.selection import select_portfolio_reference
+
+    candidates = build_lineups(tiny_pool, tiny_spec, num_lineups=300, seed=5)
+    sim = score_lineups(tiny_pool, tiny_spec, candidates, selection_universe(tiny_pool))
+    line = field_line(sim, 0.9)
+
+    for mode in ("cash", "gpp", "excess"):
+        kernel = select_portfolio(sim, mode=mode, line=line, n_select=25)
+        reference = select_portfolio_reference(sim, mode=mode, line=line, n_select=25)
+        assert kernel.tolist() == reference, mode

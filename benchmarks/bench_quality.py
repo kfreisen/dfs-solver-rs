@@ -47,9 +47,9 @@ from mlb_dfs_solver import (
     CONTRARIAN,
     JitterProfile,
     build_lineups,
+    field_line,
     score_lineups,
     select_portfolio,
-    tail_line,
 )
 from mlb_dfs_solver.pool import PlayerPool
 from mlb_dfs_solver.spec import RosterSpec
@@ -262,7 +262,10 @@ def test_selection(benchmark, rung_name: str) -> None:
     universe = simulated_universe(pool)
     sim = score_lineups(pool, spec, candidates, universe)
 
-    win_line = tail_line(sim, 0.99)
+    # Per outcome, not a constant: the field's score swings far more between
+    # outcomes than lineups do within one, so a fixed bar would mostly measure
+    # whether the slate was high-scoring.
+    win_line = field_line(sim, 0.99)
     chosen = select_portfolio(sim, mode="gpp", line=win_line, n_select=PORTFOLIO)
     selected = candidates[chosen]
 
@@ -313,8 +316,8 @@ def test_contest_modes_disagree(benchmark, rung_name: str) -> None:
     universe = simulated_universe(pool)
     sim = score_lineups(pool, spec, candidates, universe)
 
-    cash_line = tail_line(sim, 0.5)
-    win_line = tail_line(sim, 0.99)
+    cash_line = field_line(sim, 0.5)
+    win_line = field_line(sim, 0.99)
     cash_idx = select_portfolio(sim, mode="cash", line=cash_line, n_select=PORTFOLIO)
     gpp_idx = select_portfolio(sim, mode="gpp", line=win_line, n_select=PORTFOLIO)
 
@@ -335,8 +338,11 @@ def test_contest_modes_disagree(benchmark, rung_name: str) -> None:
     benchmark.extra_info["metric"] = "quality"
     benchmark.extra_info["quality"] = {
         "matched_size": int(n),
-        "cash_line": round(cash_line, 2),
-        "win_line": round(win_line, 2),
+        "median_cash_line": round(float(np.median(cash_line)), 2),
+        "median_win_line": round(float(np.median(win_line)), 2),
+        # How far the bar moves between outcomes, which is the reason it is a
+        # vector rather than a number.
+        "win_line_spread": round(float(win_line.max() - win_line.min()), 2),
         "cash_mode_entry_cash_rate": round(cash_rate[0], 4),
         "gpp_mode_entry_cash_rate": round(cash_rate[1], 4),
         "cash_mode_p_any_wins": round(win_rate[0], 4),

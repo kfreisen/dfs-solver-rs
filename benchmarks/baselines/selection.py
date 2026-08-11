@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 __all__ = ["portfolio_value_reference", "select_portfolio_reference"]
 
 
-def _gain(mode: str, scores: np.ndarray, bar: np.ndarray, line: float) -> np.ndarray:
+def _gain(mode: str, scores: np.ndarray, bar: np.ndarray, line: np.ndarray) -> np.ndarray:
     """Marginal value of each candidate against the portfolio's current state.
 
     One row per candidate; the mean is taken over outcomes. Modes are named as
@@ -50,22 +50,22 @@ def _gain(mode: str, scores: np.ndarray, bar: np.ndarray, line: float) -> np.nda
     raise ValueError(msg)
 
 
-def _floor(mode: str, line: float) -> float:
+def _floor(mode: str, line: np.ndarray) -> np.ndarray:
     """The per-outcome state before anything is chosen."""
     if mode == "excess":
-        return line
+        return line.astype(np.float32).copy()
     if mode == "gpp":
         # Anything under the line reads as "not covered"; the line itself would
         # wrongly read as covered.
-        return line - 1.0
-    return -np.inf
+        return (line - 1.0).astype(np.float32)
+    return np.full(line.shape, -np.inf, dtype=np.float32)
 
 
 def select_portfolio_reference(
     sim_scores: np.ndarray,
     *,
     mode: str,
-    line: float,
+    line: float | np.ndarray,
     n_select: int = 150,
     lineups: np.ndarray | None = None,
     max_exposure: float | Mapping[int, float] | None = None,
@@ -83,6 +83,12 @@ def select_portfolio_reference(
     n_cand, n_outcomes = scores.shape
     if n_select <= 0 or n_cand == 0:
         return []
+
+    # One value per outcome. A scalar broadcasts, which is only right when the
+    # bar genuinely does not move between outcomes.
+    line = np.broadcast_to(np.atleast_1d(np.asarray(line, dtype=np.float32)), (n_outcomes,)).astype(
+        np.float32
+    )
 
     limits: np.ndarray | None = None
     rosters: np.ndarray | None = None
@@ -102,7 +108,7 @@ def select_portfolio_reference(
             limits[player] = int(fraction * n_select)
 
     appearances = np.zeros(0 if limits is None else len(limits), dtype=np.int64)
-    bar = np.full(n_outcomes, _floor(mode, line), dtype=np.float32)
+    bar = _floor(mode, line)
     available = np.ones(n_cand, dtype=bool)
     chosen: list[int] = []
 

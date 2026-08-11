@@ -28,6 +28,7 @@ from mlb_dfs_solver._native import active_isa
 from mlb_dfs_solver.greedy import CONTRARIAN, STANDARD, JitterProfile, build_lineups
 from mlb_dfs_solver.pool import PlayerPool
 from mlb_dfs_solver.select import (
+    field_line,
     portfolio_value,
     score_lineups,
     select_portfolio,
@@ -47,6 +48,7 @@ __all__ = [
     "__version__",
     "active_isa",
     "build_lineups",
+    "field_line",
     "native_version",
     "portfolio_value",
     "score_lineups",

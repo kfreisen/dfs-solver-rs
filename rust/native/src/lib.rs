@@ -192,13 +192,13 @@ fn select_portfolio<'py>(
     exposure_limits: PyReadonlyArray1<'py, u32>,
     n_select: usize,
     mode: &str,
-    line: f32,
+    line: PyReadonlyArray1<'py, f32>,
     min_gain: f32,
 ) -> PyResult<Bound<'py, PyArray1<u32>>> {
     let objective = match mode {
-        "excess" => select::Objective::Excess { threshold: line },
-        "cover" => select::Objective::Cover { line },
-        "cash" => select::Objective::Cash { line },
+        "excess" => select::Objective::Excess,
+        "cover" => select::Objective::Cover,
+        "cash" => select::Objective::Cash,
         other => {
             return Err(PyValueError::new_err(format!(
                 "unknown selection mode {other:?}; expected 'excess', 'cover' or 'cash'"
@@ -215,6 +215,7 @@ fn select_portfolio<'py>(
     let config = select::SelectConfig {
         n_select,
         objective,
+        line: contiguous(&line, "line")?.to_vec(),
         exposure_limits: contiguous(&exposure_limits, "exposure_limits")?.to_vec(),
         min_gain,
     };
