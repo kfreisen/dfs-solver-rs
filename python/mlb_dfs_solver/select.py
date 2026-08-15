@@ -22,6 +22,11 @@ has no business modelling how baseball scores. Correlation lives in that matrix:
 two lineups sharing a stack move together automatically, because they read the
 same rows.
 
+**Everything this module guarantees is conditional on that matrix.** The
+`1 - 1/e` bound is on the search, not on the simulation. Given a poor model of
+the sport, selection will optimize against it faithfully and the bound will hold
+exactly while the portfolio is worthless.
+
 ## Cash and tournaments want different things
 
 Not different weights on one objective — different objectives. A cash game pays a
@@ -143,27 +148,27 @@ def score_lineups(
 
 
 def field_line(sim_scores: np.ndarray, quantile: float = 0.99) -> np.ndarray:
-    """The score to beat *in each outcome*, taken across candidates.
+    """A per-outcome quantile of a score matrix.
 
-    This is almost always the line you want, and a single number almost always
-    is not. The field's score swings enormously between simulated outcomes: on a
-    realistic slate the median lineup varies about six times as much across
-    outcomes as lineups vary within one. Judged against a fixed bar, "did this
-    lineup cash?" then correlates 0.98 with "was the slate high-scoring" — which
-    is no edge at all, because everyone else scored more in those worlds too.
-    Beating the field *in the same world* is what pays.
+    A per-outcome line beats a constant one. A slate's total scoring varies far
+    more between outcomes than lineups vary within any one outcome, so a fixed
+    bar mostly measures whether the slate was high-scoring — no edge, since
+    every rival entry also scored more in those worlds.
+
+    **Pass a matrix of field scores, not your own candidates.** A quantile of
+    your own pool is a bar your pool exceeds by construction: at `0.99`, 1% of
+    your candidates clear it however good or bad they are, and every downstream
+    number will look excellent. This function cannot tell which matrix it was
+    given.
 
     Args:
-        sim_scores: An `(n_candidates, n_outcomes)` array from `score_lineups`.
-        quantile: Where in the field to draw the line. `0.5` is a cash game's
-            roughly-half-the-field; `0.99` is a tournament-winning score.
+        sim_scores: An `(n_entries, n_outcomes)` array from `score_lineups`,
+            ideally scored over a modelled field.
+        quantile: Where in the field to draw the line. `0.5` is roughly half the
+            field; `0.99` is a tournament-winning score.
 
     Returns:
         One score per outcome.
-
-    A candidate pool is still a stand-in for the field — it is your lineups, not
-    the ones other people entered. If you have a field model, take its quantile
-    per outcome instead. But it is a far better stand-in than a constant.
     """
     if not 0.0 <= quantile <= 1.0:
         msg = f"quantile must be in [0, 1], got {quantile}"
@@ -223,8 +228,17 @@ def select_portfolio(
             can be exhausted well before this.
         lineups: The `(n_candidates, roster_size)` rosters, required only when
             `max_exposure` is set.
-        max_exposure: Ceiling on the fraction of chosen entries containing a
-            player. A number caps everyone; a mapping caps only those named.
+        max_exposure: Ceiling on how many chosen entries may contain a player, as
+            a fraction of `n_select`. A number caps everyone; a mapping caps only
+            those named.
+
+            Preferred over the construction-stage cap in
+            [`build_lineups`][mlb_dfs_solver.greedy.build_lineups]: this skips
+            over-cap candidates from a pool already built, rather than discarding
+            from a portfolio being assembled, so it holds closer to `n_select`.
+            The limit is still `floor(fraction * n_select)` appearances, so if
+            fewer entries come back the realized share exceeds the fraction
+            asked for.
         n_players: Size of the player pool, needed with `max_exposure` when it is
             a mapping that does not name the highest-indexed player.
         min_gain: Stop once the best remaining candidate adds less than this.

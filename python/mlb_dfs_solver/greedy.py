@@ -427,16 +427,33 @@ def build_lineups(
             A lock is honoured or the lineup is not produced; it is never quietly
             dropped. If a lock cannot coexist with the cap, a group cap, or
             another lock, the result is empty rather than a lineup without it.
-        max_exposure: Ceiling on the fraction of returned lineups that may
-            contain a player. A number caps every player; a mapping caps only the
-            players it names.
+        max_exposure: Ceiling on how many lineups may contain a player,
+            expressed as a fraction of `num_lineups` **as requested**. A number
+            caps every player; a mapping caps only the players it names.
 
             Applied when the parallel chunks are merged, which is the only place
-            that sees the whole portfolio and still reproduces exactly. A cap too
-            tight to satisfy yields fewer lineups, never a portfolio that breaks
-            it. Note the fraction is of `num_lineups` as requested, so asking for
-            200 lineups at 30% allows 60 appearances even if only 100 lineups
-            come back.
+            that sees the whole portfolio and still reproduces exactly. Over-cap
+            lineups are discarded rather than rebuilt.
+
+            **Read the realized exposure, not the number you passed.** The limit
+            is `floor(fraction * num_lineups)` appearances, and discarding lowers
+            yield, so the share of what actually comes back runs above the
+            fraction requested — and tightening the cap can raise it. Measured on
+            a 432-player slate asking for 10,000 stacked lineups:
+
+            | Requested | Returned | Realized top exposure |
+            | ---: | ---: | ---: |
+            | none | 10,000 | 82.9% |
+            | 60% | 8,650 | 69.4% |
+            | 40% | 5,930 | 67.5% |
+            | 25% | 3,963 | 63.1% |
+
+            If you are running selection, cap there instead:
+            [`select_portfolio`][mlb_dfs_solver.select.select_portfolio] skips
+            over-cap candidates from a pool you have already built rather than
+            discarding from a portfolio being assembled, so it holds much closer
+            to the count you asked for. Use this parameter when you are entering
+            the constructed lineups directly.
 
     Returns:
         An `(n, roster_size)` array of indices into `pool`, where columns follow

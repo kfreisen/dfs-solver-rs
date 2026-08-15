@@ -5,26 +5,19 @@ actually is, why the obvious approach is the wrong one, and what each piece of
 this package does about it. The [API reference](api.md) says what the functions
 take; this says why they exist.
 
-## The problem is not the one it looks like
+## Two problems
 
-You are given a few hundred players, each with a salary, a projected score, and a
-position. You must pick a roster that fills the positional slots and fits under a
-salary cap. Maximize projected points.
+**One roster.** A few hundred players with a salary, a projection and a position;
+fill the slots, stay under the cap, maximize projected points. This is an integer
+program. `benchmarks/baselines/milp.py` solves it exactly in under a second and
+beats everything else here. If you enter one lineup, use it.
 
-Stated that way it is an integer program, a solver answers it exactly in under a
-second, and there is nothing more to discuss. `benchmarks/baselines/milp.py`
-contains that solver, it works, and on this measure it beats everything else
-here. If your contest is one entry against a simple payout, use it.
+**Many rosters.** Contests take up to 150 entries, and a field simulation takes a
+hundred thousand. Repeatedly solving and forbidding the last answer gives the top
+N by projection, which is a different object from N independent good rosters.
 
-The real question is different in a way that changes the answer completely.
-Contests let you enter **many** lineups — a hundred and fifty is a common
-maximum — and the payout is wildly top-heavy. A large tournament might return
-nothing at all outside the top fifth of the field, and most of the prize pool to
-the top fraction of a percent. What you are choosing is not a lineup. It is a
-*portfolio*, and it is judged on whether **any** of your entries lands in the
-money.
-
-That distinction is the whole package.
+This package addresses the second. It is a weak optimizer per lineup and a fast
+one per thousand, and everything below follows from that trade.
 
 ## What a solver gives you for 150 lineups
 
@@ -74,25 +67,24 @@ valid rosters. It perturbs every player's value, sorts, and fills slots greedily
 repairing the salary total when it lands under the floor. Then it does that
 thousands of times with different random draws.
 
-It is deliberately a weak optimizer. A solver beats it on any single lineup and
-that is fine, because its job is coverage: produce many *different* legal rosters
-cheaply, so that something good is in the pool. Optimality per candidate would be
-wasted work — the next stage decides what is good.
-
-What it does take seriously is legality, which is more varied than it sounds. See
-[what a contest can require](#what-a-contest-can-require) below.
+It is a weak optimizer by design. A solver beats it on any single lineup; its job
+is throughput, so that something good is in the pool for the next stage to find.
+What it does enforce strictly is legality — see
+[what a contest can require](#what-a-contest-can-require).
 
 ### 2. Simulation — what might happen
 
-Selection needs to know how lineups perform across the ways a slate can break,
-which means a matrix: what every player scored in every simulated outcome.
+Selection needs a matrix: what every player scored in every simulated outcome.
 
-**This package does not produce that matrix.** It is the one piece deliberately
-left out. Simulating baseball well means modelling batting order, park factors,
-pitcher handedness, and the correlation between a team's hitters — and none of
-that generalizes to hockey or golf, which the rest of this library does.
+**This package does not produce that matrix**, and that is the one omission that
+constrains everything else. Simulating baseball means modelling batting order,
+park factors, handedness and the correlation between a team's hitters, none of
+which generalizes to the other sports the rest of this library handles.
 [`score_lineups`][mlb_dfs_solver.select.score_lineups] takes the matrix and sums
 each roster's players out of it, applying slot multipliers on the way.
+
+The quality of what comes out of stage 3 is bounded by this matrix, not by
+anything in this package. Budget accordingly.
 
 Correlation comes along for free. Two lineups stacking the same team index the
 same rows, so they rise and fall together with no extra machinery — which is
@@ -143,11 +135,10 @@ on one.
 | Objective | `P(score ≥ line)` per entry | `P(any entry ≥ line)` |
 | Structure | modular; greedy is *exactly* optimal | submodular; greedy is within `1 - 1/e` |
 
-Diversity is not merely unnecessary in a cash game — it is harmful. If you have
-found the roster most likely to beat the line, the second-best thing you can
-enter is the *next* most likely, not something different for its own sake. Cash
-mode therefore ignores the portfolio entirely, which makes it modular, which
-makes ranking exactly optimal rather than an approximation.
+In a cash game diversity is harmful, not merely unnecessary: if you have the
+roster most likely to beat the line, the next thing to enter is the second most
+likely. Cash mode therefore ignores the portfolio, which makes the objective
+modular and ranking exactly optimal rather than an approximation.
 
 ## The line, and why it is a vector
 
@@ -266,20 +257,17 @@ outcomes above a line and a 0.06-point error flips the ones sitting on it.
 
 ## What belongs in here, and what does not
 
-A library like this fails slowly, by accumulating one reasonable-sounding input
-at a time until nobody can say what the objective is. The implementation this
-grew out of ended with fifteen calibration weights in a single scoring function —
-ace rate, chalk-pitcher reward, one-off penalties, stack coverage — each defensible
-alone and collectively impossible to reason about.
+The rule for new per-player inputs: **it belongs here only if the objective
+already models that quantity and is currently guessing at it.** Projection,
+standard deviation and ownership pass — the objective uses all three. A ceiling
+fails, because `stddev` already carries it.
 
-So there is a test for what gets in. **A per-player input belongs here only if the
-objective already models that quantity and is currently guessing at it.**
-Projection, standard deviation and ownership pass: the objective uses all three.
-A ceiling fails, not because it is a bad input but because `stddev` already
-carries it.
+The rule exists because the predecessor to this library accumulated fifteen
+calibration weights in one scoring function, each defensible alone and jointly
+impossible to reason about.
 
-Preferences about *roster composition* are a different category and are not
-inputs at all. Most are already reachable:
+Preferences about *roster composition* are not inputs at all. Most are already
+reachable:
 
 | Want | Reach for |
 | --- | --- |

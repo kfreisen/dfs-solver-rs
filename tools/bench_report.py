@@ -239,7 +239,7 @@ def readme_summary(report: dict[str, Any]) -> str:
         and c.get("quality")
         and c.get("metric", "seconds") == "seconds"
     }
-    ours, solver = generated.get("slatekit_rust"), generated.get("milp_ortools_cpsat")
+    ours, solver = generated.get("mlb_dfs_solver_rust"), generated.get("milp_ortools_cpsat")
     if ours and solver:
         lines += [
             f"**What each one generates.** {ours.get('detail', '')}, "
@@ -266,7 +266,7 @@ def readme_summary(report: dict[str, Any]) -> str:
         for c in report["cases"]
         if c["name"].startswith("contest/") and c.get("metric", "seconds") == "seconds"
     }
-    ours, solver = contest.get("slatekit_rust"), contest.get("milp_ortools_cpsat")
+    ours, solver = contest.get("mlb_dfs_solver_rust"), contest.get("milp_ortools_cpsat")
     if ours and solver:
         # The solver is measured on a prefix; its full cost is arithmetic on that
         # rate and is labelled as such rather than presented as a measurement.
@@ -302,7 +302,7 @@ def readme_summary(report: dict[str, Any]) -> str:
             "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
         ]
         for name, impls in by_case.items():
-            ours = impls.get("slatekit_rust")
+            ours = impls.get("mlb_dfs_solver_rust")
             if ours is None:
                 continue
             python = impls.get("reference_python")

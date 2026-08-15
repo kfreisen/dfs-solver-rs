@@ -15,7 +15,7 @@ second, smaller placeholder::
 
     <!-- headline -->
 
-which renders only the end-to-end pipeline table.
+which renders only the generated-lineups comparison.
 
 Results are grouped by hardware, because a speedup measured on one machine is a claim
 about that machine. The most recent file per hardware wins; older files stay in the
@@ -237,7 +237,7 @@ def render_headline() -> str:
             and case.get("metric", "seconds") == "seconds"
         ]
         by_impl = {case["impl"]: case for case in timed}
-        ours = by_impl.get("slatekit_rust")
+        ours = by_impl.get("mlb_dfs_solver_rust")
         solver = by_impl.get("milp_ortools_cpsat")
         if not (ours and solver):
             continue

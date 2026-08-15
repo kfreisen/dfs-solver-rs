@@ -86,7 +86,7 @@ def test_kernel(benchmark, rung_name: str) -> None:
     }
 
     result = benchmark(build_lineups, pool, rung.spec, **kwargs)
-    _record(benchmark, rung, "slatekit_rust", LINEUPS, len(result))
+    _record(benchmark, rung, "mlb_dfs_solver_rust", LINEUPS, len(result))
     assert len(result) > 0, f"rung {rung.name} produced nothing to measure"
 
 

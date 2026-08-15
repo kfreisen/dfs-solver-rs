@@ -74,7 +74,7 @@ def test_kernel(benchmark, slate, num_lineups: int) -> None:
     result = benchmark(
         build_lineups, pool, spec, num_lineups=num_lineups, seed=1, attempts_per_lineup=5
     )
-    _record(benchmark, num_lineups, "slatekit_rust", len(pool), len(result))
+    _record(benchmark, num_lineups, "mlb_dfs_solver_rust", len(pool), len(result))
     assert len(result) > 0
 
 

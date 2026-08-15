@@ -110,7 +110,7 @@ def contest_slate():
 
 
 @pytest.mark.parametrize("rung_name", DESCRIBE_RUNGS)
-@pytest.mark.parametrize("impl", ["slatekit_rust", "milp_ortools_cpsat"])
+@pytest.mark.parametrize("impl", ["mlb_dfs_solver_rust", "milp_ortools_cpsat"])
 def test_generated(benchmark, portfolio_slate, rung_name: str, impl: str) -> None:
     """Describe a 150-lineup draw from each implementation on one config."""
     pool = portfolio_slate
@@ -121,7 +121,7 @@ def test_generated(benchmark, portfolio_slate, rung_name: str, impl: str) -> Non
     assert best is not None, f"no optimum for rung {rung.name}"
     optimum = float(pool.projection_of(np.array([best]), spec)[0])
 
-    if impl == "slatekit_rust":
+    if impl == "mlb_dfs_solver_rust":
         lineups = benchmark(
             build_lineups, pool, spec, num_lineups=PORTFOLIO, seed=1, attempts_per_lineup=ATTEMPTS
         )
@@ -181,7 +181,7 @@ def test_generated_differs(benchmark, portfolio_slate) -> None:
     solver_d = describe_lineups(pool, spec, solver)
 
     benchmark.extra_info["case"] = "generated/head-to-head"
-    benchmark.extra_info["impl"] = "slatekit_rust"
+    benchmark.extra_info["impl"] = "mlb_dfs_solver_rust"
     benchmark.extra_info["metric"] = "quality"
     benchmark.extra_info["quality"] = {
         **{f"ours_{k}": v for k, v in ours_d.items()},
@@ -214,7 +214,7 @@ def test_contrarian_profile_shifts_ownership(benchmark, portfolio_slate) -> None
         return float(np.mean(pool.ownership[lineups]))
 
     benchmark.extra_info["case"] = "generated/profiles"
-    benchmark.extra_info["impl"] = "slatekit_rust"
+    benchmark.extra_info["impl"] = "mlb_dfs_solver_rust"
     benchmark.extra_info["metric"] = "quality"
     benchmark.extra_info["quality"] = {
         "standard_ownership": round(mean_ownership(standard), 4),
@@ -224,7 +224,7 @@ def test_contrarian_profile_shifts_ownership(benchmark, portfolio_slate) -> None
     assert mean_ownership(contrarian) < mean_ownership(standard)
 
 
-@pytest.mark.parametrize("impl", ["slatekit_rust", "milp_ortools_cpsat"])
+@pytest.mark.parametrize("impl", ["mlb_dfs_solver_rust", "milp_ortools_cpsat"])
 def test_contest_scale(benchmark, contest_slate, impl: str) -> None:
     """A field-sized draw: 10,000 lineups under a stacked, exposure-capped config.
 
@@ -236,7 +236,7 @@ def test_contest_scale(benchmark, contest_slate, impl: str) -> None:
     spec = rung.spec
     caps = dict.fromkeys(range(len(pool)), CONTEST_EXPOSURE_CAP)
 
-    if impl == "slatekit_rust":
+    if impl == "mlb_dfs_solver_rust":
         lineups = benchmark(
             build_lineups,
             pool,
