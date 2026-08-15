@@ -15,7 +15,7 @@ second, smaller placeholder::
 
     <!-- headline -->
 
-which renders only the generated-lineups comparison.
+which renders only the full mass-multi-entry comparison.
 
 Results are grouped by hardware, because a speedup measured on one machine is a claim
 about that machine. The most recent file per hardware wins; older files stay in the
@@ -87,24 +87,23 @@ def group_by_case(cases: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]
 
 
 def render_timing_case(case_name: str, measurements: list[dict[str, Any]]) -> list[str]:
-    """Render one case as a table ranked fastest first."""
+    """Render one scenario: how long each implementation took, and what it made."""
     ranked = sorted(measurements, key=lambda m: m["median"])
     best = ranked[0]
-    metric = best.get("metric", "seconds")
-    unit = "s" if metric == "seconds" else ""
-    # Yield is only meaningful where a benchmark recorded it, and only worth a
-    # column where something actually fell short: a table of 1.00 teaches nothing.
-    show_yield = any(m.get("params", {}).get("yield", 1.0) < 1.0 for m in measurements)
 
     detail = next((m["detail"] for m in measurements if m.get("detail")), "")
-    lines = [f"**{case_name}**" + (f" — {detail}" if detail else ""), ""]
-
-    header = f"| Implementation | Median ({metric}) | Relative |"
-    divider = "| --- | ---: | ---: |"
-    if show_yield:
-        header += " Lineups returned |"
-        divider += " ---: |"
-    lines += [header, divider]
+    params = best.get("params", {})
+    requested = params.get("requested")
+    lines = [
+        f"**{case_name}**" + (f" — {detail}" if detail else ""),
+        "",
+        f"{requested:,} entries requested, {params.get('pool', '?')}-player slate."
+        if requested
+        else "",
+        "",
+        "| Implementation | Time | Relative | Returned | Players used | Projection min → max |",
+        "| --- | ---: | ---: | ---: | ---: | ---: |",
+    ]
 
     for m in ranked:
         if m is best:
@@ -114,17 +113,23 @@ def render_timing_case(case_name: str, measurements: list[dict[str, Any]]) -> li
             relative = f"{m['median'] / best['median']:.1f}× slower"  # noqa: RUF001
         else:
             relative = "—"
-        row = f"| `{m['impl']}` | {m['median']:.6f}{unit} | {relative} |"
-        if show_yield:
-            params = m.get("params", {})
-            produced = params.get("produced")
-            requested = params.get("requested")
-            row += (
-                f" {produced} of {requested} |"
-                if produced is not None and requested is not None
-                else " — |"
-            )
-        lines.append(row)
+        p = m.get("params", {})
+        q = m.get("quality", {})
+        returned = (
+            f"{p['produced']:,} of {p['requested']:,}"
+            if "produced" in p and "requested" in p
+            else "—"
+        )
+        used = f"{q['distinct_players']} of {q['pool_size']}" if "distinct_players" in q else "—"
+        spread = (
+            f"{q['worst_ratio']:.0%} → {q['best_ratio']:.0%}"
+            if "worst_ratio" in q and "best_ratio" in q
+            else "—"
+        )
+        lines.append(
+            f"| `{m['impl']}` | {duration(m['median'])} | {relative} | "
+            f"{returned} | {used} | {spread} |"
+        )
     lines.append("")
 
     if len(measurements) == 1:
@@ -137,29 +142,26 @@ def render_timing_case(case_name: str, measurements: list[dict[str, Any]]) -> li
     return lines
 
 
-def render_quality_case(case_name: str, measurements: list[dict[str, Any]]) -> list[str]:
-    """Render a case that measured goodness rather than time.
-
-    Kept apart from the timing tables and rendered as plain key/value rows,
-    because these are not comparable to each other and ranking them by the
-    stopwatch would be meaningless — the benchmark times a no-op.
-    """
+def render_detail_case(case_name: str, measurements: list[dict[str, Any]]) -> list[str]:
+    """Every recorded measure for one scenario, per implementation."""
     lines: list[str] = []
     for m in measurements:
-        detail = f" — {m['detail']}" if m.get("detail") else ""
+        quality = m.get("quality", {})
+        if not quality:
+            continue
         lines += [
-            f"**{case_name}**{detail}",
+            f'??? note "{case_name} — `{m["impl"]}`, every measure"',
             "",
-            "| Measure | Value |",
-            "| --- | ---: |",
+            "    | Measure | Value |",
+            "    | --- | ---: |",
+            *[f"    | `{k}` | {v} |" for k, v in quality.items()],
+            "",
         ]
-        lines += [f"| `{k}` | {v} |" for k, v in m.get("quality", {}).items()]
-        lines.append("")
     return lines
 
 
 def render_result(result: dict[str, Any]) -> list[str]:
-    """Render one machine's results as a heading plus a table per case."""
+    """Render one machine's results as a heading plus a table per scenario."""
     hw = result["hardware"]
     ram = f", {hw['ram_gb']} GB RAM" if hw.get("ram_gb") else ""
     lines = [
@@ -170,28 +172,16 @@ def render_result(result: dict[str, Any]) -> list[str]:
         f"Measured {result['timestamp'][:10]} against `{result['git_sha']}` "
         f"of `{result['package']} {result['version']}`.",
         "",
+        "Each scenario is a configuration somebody plays, and both implementations "
+        "are asked for the same number of entries on the same slate. Every figure "
+        "describes the lineups or the inputs supplied — none of it scores a "
+        "simulated contest.",
+        "",
     ]
 
-    grouped = group_by_case(result["cases"])
-    timing = {k: v for k, v in grouped.items() if v[0].get("metric", "seconds") == "seconds"}
-    quality = {k: v for k, v in grouped.items() if v[0].get("metric", "seconds") != "seconds"}
-
-    for case_name, measurements in timing.items():
+    for case_name, measurements in group_by_case(result["cases"]).items():
         lines += render_timing_case(case_name, measurements)
-
-    if quality:
-        lines += [
-            "#### What was generated",
-            "",
-            "Speed alone says nothing about the output, so the output is described "
-            "here: how much of the slate each draw used, how concentrated it was on "
-            "individual players, and how far its rosters spread in projection. "
-            "Every figure is a property of the lineups and of the inputs supplied "
-            "— none of it scores a simulated contest.",
-            "",
-        ]
-        for case_name, measurements in quality.items():
-            lines += render_quality_case(case_name, measurements)
+        lines += render_detail_case(case_name, measurements)
 
     return lines
 
@@ -227,12 +217,12 @@ def render() -> str:
 
 
 def render_headline() -> str:
-    """Render the generated-lineups comparison alone, for a narrative page."""
+    """Render the full-MME generated-lineups comparison, for a narrative page."""
     for result in latest_results():
         timed = [
             case
             for case in result["cases"]
-            if case["name"] == "generated/stack"
+            if case["name"] == "mme"
             and case.get("quality")
             and case.get("metric", "seconds") == "seconds"
         ]
@@ -244,8 +234,9 @@ def render_headline() -> str:
 
         hw = result["hardware"]
         lines = [
-            f"*{ours.get('detail', '')}, {ours['params']['requested']} lineups from "
-            f"each. Measured on {hw['cpu']}, {result['timestamp'][:10]}.*",
+            f"*The `mme` scenario: {ours.get('detail', '')}. "
+            f"{ours['params']['requested']} entries from each. "
+            f"Measured on {hw['cpu']}, {result['timestamp'][:10]}.*",
             "",
             "| | Time | Players used | Projection, min → max | Top player's share |",
             "| --- | ---: | ---: | ---: | ---: |",

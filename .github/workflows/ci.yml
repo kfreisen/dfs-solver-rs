@@ -65,16 +65,13 @@ jobs:
             uv run marimo export html "$nb" -o /dev/null
           done
 
-      # Proves the benchmark harness still runs. Deliberately not timed: shared
-      # runners vary by roughly 2x and a flaky performance gate is a gate people
-      # learn to ignore. Real numbers are measured on known hardware and
-      # committed — see docs/benchmarks.md.
-      #
-      # `-m "not slow"` is load bearing, not tidiness. --benchmark-disable still
-      # executes each body once, and the contest-scale case is ten thousand
-      # sequential CP-SAT solves — the better part of an hour on a shared runner.
+      # Proves the benchmark harness still imports and runs, on deliberately tiny
+      # sizes, and writes nothing. CI never produces a number: shared runners
+      # vary by roughly 2x and a flaky performance gate is a gate people learn to
+      # ignore. Real numbers come from a manual `task bench` on known hardware
+      # and are committed — see docs/benchmarks.md.
       - name: benchmarks smoke-run
-        run: uv run --group bench pytest benchmarks/ -q --benchmark-disable -m "not slow"
+        run: uv run --group bench python benchmarks/run.py --smoke
 
       - name: cargo fmt
         # --all: the manifest is a workspace root with no targets of its own, so

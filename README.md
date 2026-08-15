@@ -126,7 +126,7 @@ What those columns mean:
   complete; randomized construction is not, and when constraints bite it runs out of legal
   rosters it has not already found.
 
-Full definitions, the ladder, every implementation and the hardware:
+Full definitions, every scenario, every implementation and the hardware:
 <https://kfreisen.github.io/mlb-dfs-solver/benchmarks/>
 
 ### What is not measured

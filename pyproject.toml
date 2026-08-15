@@ -71,23 +71,20 @@ dev = [
 # The MILP baselines. These are the "before" this package is measured against and
 # must never reach a user's install — PuLP alone would drag in a CBC binary.
 bench = [
-    "pytest>=8.0",
-    "pytest-benchmark>=4.0",
     "pulp>=3.0,<4",
     "ortools>=9.10",
+    # Only for the RAM figure recorded alongside each result. Optional at
+    # runtime — benchmarks/run.py records `null` without it rather than failing.
+    "psutil>=5.9",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# Benchmarks live outside testpaths and are named bench_*.py so a normal `pytest`
-# run never picks them up; naming them here lets `pytest benchmarks/` collect them.
-python_files = ["test_*.py", "bench_*.py"]
+# Benchmarks are not pytest at all — see benchmarks/run.py. testpaths keeps a
+# bare `pytest` on the test suite regardless of where it is invoked from.
+python_files = ["test_*.py"]
 addopts = "-q --strict-markers --strict-config"
 filterwarnings = ["error"]
-# Deselected in CI and by `task bench-quick` with -m "not slow"; `task bench`
-# runs it. Note --benchmark-disable does not make a case cheap: it leaves the
-# body executing once, so anything genuinely long has to carry this marker.
-markers = ["slow: only run by a manual `task bench`"]
 
 [tool.coverage.run]
 source = ["mlb_dfs_solver"]

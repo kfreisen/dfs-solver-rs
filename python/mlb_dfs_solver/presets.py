@@ -36,7 +36,13 @@ from __future__ import annotations
 
 from mlb_dfs_solver.spec import GroupConstraint, RosterSpec, Slot
 
-__all__ = ["DK_MLB_CLASSIC", "DK_NFL_CLASSIC", "DK_NFL_SHOWDOWN", "PRESETS"]
+__all__ = [
+    "DK_MLB_CLASSIC",
+    "DK_MLB_SHOWDOWN",
+    "DK_NFL_CLASSIC",
+    "DK_NFL_SHOWDOWN",
+    "PRESETS",
+]
 
 
 # Slots are listed scarce-first, which is the order construction fills them in.
@@ -121,8 +127,34 @@ DK_NFL_SHOWDOWN = RosterSpec(
 )
 
 
+# The MLB single-game format. Captain scores 1.5x and costs 1.5x, the same shape
+# as the NFL one; every position fills every slot, so slot *order* does the work
+# and the captain is listed first to spend its premium on the best available
+# player rather than on whoever is left.
+DK_MLB_SHOWDOWN = RosterSpec(
+    positions=("P", "C", "1B", "2B", "3B", "SS", "OF"),
+    slots=(
+        Slot(
+            "CPT",
+            ("P", "C", "1B", "2B", "3B", "SS", "OF"),
+            score_multiplier=1.5,
+            salary_multiplier=1.5,
+        ),
+        Slot("UTIL", ("P", "C", "1B", "2B", "3B", "SS", "OF"), count=5),
+    ),
+    salary_cap=50_000,
+    salary_floor=0,
+    # DraftKings requires players from both teams here. Left off for the same
+    # reason as the game rule above: it needs a `team` key on every record, and a
+    # preset cannot know the caller supplied one. Add it when yours does:
+    # `GroupConstraint(key="team", min_distinct=2)`.
+    groups=(),
+)
+
+
 PRESETS: dict[str, RosterSpec] = {
     "dk_mlb_classic": DK_MLB_CLASSIC,
+    "dk_mlb_showdown": DK_MLB_SHOWDOWN,
     "dk_nfl_classic": DK_NFL_CLASSIC,
     "dk_nfl_showdown": DK_NFL_SHOWDOWN,
 }

@@ -34,15 +34,10 @@ that fails for unrelated reasons is a check people learn to ignore.
 So CI does two things instead:
 
 1. Runs the parity tests, which is where the correctness of the claim actually lives.
-2. Runs the benchmark suite with timing disabled, to prove the benchmark code still executes.
+2. Runs `benchmarks/run.py --smoke` — one scenario at five lineups — to prove the harness
+   still imports and executes.
 
-Neither asserts a duration.
-
-One case is deselected there entirely. Disabling timing does not make a benchmark
-cheap — it leaves the body executing once — and once for the contest-scale draw
-is ten thousand sequential CP-SAT solves. It carries a `slow` marker, CI runs
-`-m "not slow"`, and its number comes from a manual `task bench`, which is where
-every published number here comes from anyway.
+Neither asserts a duration, and the smoke run writes nothing.
 
 ## Numbers come from named hardware
 
@@ -57,8 +52,12 @@ committed. Each file records the CPU model, core count, RAM, OS, Python version,
 and the commit it was measured against. Results are grouped by machine because a speedup is a
 claim about a machine, not a universal constant.
 
-Timings use [`pytest-benchmark`](https://pytest-benchmark.readthedocs.io/), which handles warmup
-and round calibration, rather than a hand-rolled `perf_counter` loop.
+Benchmarks are not pytest. They are long by design — the contest-scale row is ten thousand
+sequential CP-SAT solves — and a test runner is the wrong home for that: it put them in CI on
+every push, and it pinned the portfolio size to 25 lineups, a number nobody plays, because that
+was the largest a solver could finish inside a test session. `benchmarks/run.py` is a plain
+script. Each case is timed with `perf_counter` and repeated while it is short enough for
+repetition to mean anything, reporting the median rather than the minimum.
 
 The tables on the benchmark page are rendered from those JSON files when the site is
 built. Nobody types a number into a document, so no document can disagree with the data.
@@ -121,8 +120,8 @@ implementations**. A solver is complete and returns all of them. Randomized
 construction is not: when constraints bite it runs out of legal rosters it has
 not already found.
 
-Both are shown because a speedup dividing our time for 14 lineups by a solver's
-time for 25 is not a ratio.
+Both are shown because a speedup dividing our time for 84 lineups by a solver's
+time for 150 is not a ratio.
 
 ### `no-good cuts`
 
@@ -147,7 +146,7 @@ assuming per-lineup cost is flat in the count. It is not: every solve carries on
 more no-good cut than the last, so the rate degrades across ten thousand of them
 and the extrapolation understated the real figure. The per-lineup column exists
 so that degradation is visible rather than inferred — compare it against the
-solver's per-lineup cost at 25 lineups on the constraint ladder.
+solver's per-lineup cost on the 150-entry scenarios above.
 
 This is by a wide margin the slowest case in the suite. It is worth the wall
 clock, because the number it replaced was wrong.
