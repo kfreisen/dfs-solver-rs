@@ -268,23 +268,21 @@ def readme_summary(report: dict[str, Any]) -> str:
     }
     ours, solver = contest.get("mlb_dfs_solver_rust"), contest.get("milp_ortools_cpsat")
     if ours and solver:
-        # The solver is measured on a prefix; its full cost is arithmetic on that
-        # rate and is labelled as such rather than presented as a measurement.
-        prefix = solver["params"]["requested"]
-        target = solver["params"].get("extrapolated_to", 0)
-        per_lineup = solver["median"] / max(prefix, 1)
         lines += [
             f"**At contest scale.** {ours.get('detail', '')} — the draw a field "
-            "simulation or a candidate pool needs. Here the two are not "
-            "alternatives.",
+            "simulation or a candidate pool needs. Both run to completion; "
+            "neither figure is extrapolated.",
             "",
-            "| | Lineups | Time |",
-            "| --- | ---: | ---: |",
-            f"| This package | {ours['params']['produced']:,} | {_duration(ours['median'])} |",
-            f"| Solver + no-good cuts | {prefix} measured | {_duration(solver['median'])} |",
-            f"| Solver, extrapolated | {target:,} | ~{_duration(per_lineup * target)} |",
-            "",
+            "| | Lineups | Time | Per lineup |",
+            "| --- | ---: | ---: | ---: |",
         ]
+        for label, case in (("This package", ours), ("Solver + no-good cuts", solver)):
+            produced = case["params"]["produced"]
+            lines.append(
+                f"| {label} | {produced:,} | {_duration(case['median'])} | "
+                f"{_duration(case['median'] / max(produced, 1))} |"
+            )
+        lines.append("")
 
     ladder = [c for c in report["cases"] if c["name"].startswith("constraints/")]
     if ladder:

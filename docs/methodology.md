@@ -131,13 +131,20 @@ with each earlier one is the other common technique, and it is a fairer
 comparison at 150 entries. It is also markedly slower, which is why the
 contest-scale table exists.
 
-### Contest scale, and the extrapolated row
+### Contest scale
 
-The 10,000-lineup table measures this package directly and the solver on a
-25-lineup prefix. The solver's per-lineup cost is flat in the count — the
-accumulated no-good cuts are cheap next to the solve — so the full figure is that
-rate times 10,000, and it is labelled as an extrapolation rather than printed as
-a measurement.
+Both implementations are run to a full 10,000-lineup draw. Nothing in that table
+is extrapolated.
+
+An earlier version measured the solver on a 25-lineup prefix and multiplied,
+assuming per-lineup cost is flat in the count. It is not: every solve carries one
+more no-good cut than the last, so the rate degrades across ten thousand of them
+and the extrapolation understated the real figure. The per-lineup column exists
+so that degradation is visible rather than inferred — compare it against the
+solver's per-lineup cost at 25 lineups on the constraint ladder.
+
+This is by a wide margin the slowest case in the suite. It is worth the wall
+clock, because the number it replaced was wrong.
 
 ## What a benchmark here does not tell you
 

@@ -16,10 +16,11 @@ Two questions, and they want different scales.
 how their output differs. Both are asked for the same count on the same config.
 
 **At contest scale (10,000 lineups)** they are not alternatives. This is the draw
-a field simulation or a candidate pool needs, and the solver's per-lineup cost
-makes it a different order of problem. The solver is measured on a bounded prefix
-and the full cost stated as an extrapolation, because running it to completion
-would take the better part of a day and tell nobody anything new.
+a field simulation or a candidate pool needs. Both implementations are run to
+completion — the solver's figure is a measurement, not a per-lineup rate
+multiplied out, because its rate is not flat: each solve carries one more no-good
+cut than the last. That makes this the slowest case in the suite by a wide margin
+and it is worth what it costs, since the extrapolation it replaced was wrong.
 
 Neither table says which output is better. That depends on the contest and on
 projections this package does not supply.
@@ -64,10 +65,6 @@ ATTEMPTS = 5
 
 # Contest scale. See `slates.CONTEST_*` for why the slate is larger here.
 CONTEST_DRAW = 10_000
-# How many lineups the solver is actually run for. Its rate is flat in the count
-# -- the no-good cuts are cheap next to the solve -- so a prefix measures the
-# per-lineup cost honestly, and the extrapolation to 10,000 is stated as one.
-SOLVER_PREFIX = 25
 SOLVER_LIMIT_S = 30.0
 # The reference distribution percentile rank is measured against.
 REFERENCE_POPULATION = 2_000
@@ -246,17 +243,19 @@ def test_contest_scale(benchmark, contest_slate, impl: str) -> None:
             attempts_per_lineup=15,
             max_exposure=caps,
         )
-        requested, produced = CONTEST_DRAW, int(len(lineups))
-        extrapolated = None
     else:
-        # A bounded prefix. The solver's exposure cap is applied between solves,
-        # the same greedy rule the kernel uses at its merge.
+        # The full draw, actually run. An earlier version measured a 25-lineup
+        # prefix and multiplied, on the assumption that per-lineup cost is flat
+        # in the count. It is not: every solve carries one more no-good cut than
+        # the last, so the rate degrades over ten thousand of them and the
+        # extrapolation understated the real figure. The solver's exposure cap is
+        # applied between solves, the same greedy rule the kernel uses at merge.
         lineups = np.array(
             benchmark.pedantic(
                 solve_portfolio_ortools,
                 args=(pool, spec),
                 kwargs={
-                    "num_lineups": SOLVER_PREFIX,
+                    "num_lineups": CONTEST_DRAW,
                     "time_limit_s": SOLVER_LIMIT_S,
                     "max_exposure": caps,
                 },
@@ -264,8 +263,6 @@ def test_contest_scale(benchmark, contest_slate, impl: str) -> None:
                 iterations=1,
             )
         )
-        requested, produced = SOLVER_PREFIX, int(len(lineups))
-        extrapolated = CONTEST_DRAW
 
     assert len(lineups) > 0
     benchmark.extra_info["case"] = "contest/10k draw"
@@ -275,12 +272,8 @@ def test_contest_scale(benchmark, contest_slate, impl: str) -> None:
         f"stacked, {CONTEST_EXPOSURE_CAP:.0%} exposure cap"
     )
     benchmark.extra_info["params"] = {
-        "requested": requested,
-        "produced": produced,
-        # Set only for the implementation that was measured on a prefix, so the
-        # report can label the extrapolation rather than presenting it as a
-        # measurement.
-        **({"extrapolated_to": extrapolated} if extrapolated else {}),
+        "requested": CONTEST_DRAW,
+        "produced": int(len(lineups)),
     }
     benchmark.extra_info["quality"] = {
         "requested_exposure_cap": CONTEST_EXPOSURE_CAP,
