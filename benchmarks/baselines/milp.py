@@ -7,17 +7,20 @@ what the comparison shows — because the naive reading of it is wrong.
 optimum and the greedy builder returns something slightly worse. That is not in
 dispute and this file exists partly to demonstrate it.
 
-**The interesting question is a portfolio.** Asked for 150 lineups, a solver
-returns the optimum, then the second best, then the third — which differ from each
-other by one or two players. That is a terrible portfolio for a large-field
-contest, where the payoff is convex and coverage of the outcome space is what pays.
-Getting genuine diversity out of a solver means adding no-good cuts or overlap
-constraints and re-solving once per lineup, and the cost of that is what the
-benchmark measures.
+**Asked for many, it returns the top N by projection.** Each is the best remaining
+roster after forbidding the last, so they differ by a player or two and are built
+from a narrow slice of the slate. `bench_generated.py` describes that difference
+without judging it: whether a tight, high-projection set beats a wide one depends
+on the contest and on the projections, and nothing in this repository can settle
+that.
 
-So the honest framing is: **per-lineup quality favors the solver, and portfolio
-quality favors randomized construction plus selection.** Both are measured, in
-`bench_pipeline.py`.
+**A caveat on this baseline.** `_portfolio` below gets diversity from no-good cuts
+alone. The other standard technique is an overlap constraint — bounding how many
+players a new lineup may share with each one already found — which produces a
+visibly wider set at 150 entries and costs substantially more per solve. It is not
+implemented here, so read the 150-entry comparison as against the cheapest way to
+get N lineups from a solver, not the best one. The contest-scale table does not
+depend on the distinction: at 10,000 lineups both are out of reach.
 
 Speed is the smaller part of the story and was long overstated here. On a
 realistic slate CBC produces a 150-entry portfolio in about eighteen seconds —

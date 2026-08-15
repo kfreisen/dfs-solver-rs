@@ -8,4 +8,6 @@
 
 ::: mlb_dfs_solver.greedy
 
+::: mlb_dfs_solver.select
+
 ::: mlb_dfs_solver.presets

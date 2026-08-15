@@ -57,91 +57,87 @@ and round calibration, rather than a hand-rolled `perf_counter` loop.
 The tables on the benchmark page are rendered from those JSON files when the site is
 built. Nobody types a number into a document, so no document can disagree with the data.
 
-## What the columns mean
+## What is measured, and what is not
 
-Every measure in the benchmark tables is defined here, because several are easy to
-read as something more (or less) impressive than they are.
+These benchmarks measure **how long generation takes** and **what it generates**.
+Nothing more.
+
+They do not report what a portfolio would have won, cashed, or returned. Those
+numbers require a simulator and a model of the field, this package supplies
+neither, and a benchmark that wrote its own would be measuring that fixture. The
+in-the-money figures this page used to define were exactly that: a quantile of a
+synthetic field, scored against Gaussian player outcomes, both written here. They
+moved when the fixture was rewritten, which is the tell.
+
+What survives is enough to tell the two approaches apart, and every figure can be
+checked by reading the lineups.
+
+## What the columns mean
 
 ### The optimum
 
-The single highest-projection roster that satisfies every constraint, proved by
-CP-SAT with no cuts and no time pressure. It is one lineup, not a portfolio, and
-it is the yardstick the two ratios below divide by.
+The single highest-projection roster satisfying every constraint, proved by
+CP-SAT with no cuts and no time pressure. One lineup, not a portfolio. It is the
+yardstick the ratios divide by.
 
-### `median vs optimum` and `best vs optimum`
+It is projection arithmetic on the inputs both implementations were given, so it
+measures how well each searched the space — not whether the projections were any
+good.
 
-Add up each entry's projected points, take the median (or the maximum) across the
-portfolio, and divide by the optimum. "94%" means the middle entry of the 150
-projects to 94% of what the single best legal roster projects to.
+### `players used`
 
-This is the measure a solver wins by construction. Asked for 150 lineups it
-returns the 150 highest-projection rosters, so its median *is* the optimum and no
-sampling method can match that. It is reported because it is the honest half of
-the comparison — and because it is not the half a contest pays on.
+How many distinct players appear anywhere in the draw, out of the slate. A method
+returning 150 rosters built from 33 players is exploring one corner of the slate;
+one returning 150 from 117 is not.
 
-Note what it is not: a prediction of points scored. It is projection arithmetic on
-the same inputs both approaches were given, so it measures how well each searched
-the space, not whether the projections were any good.
+The single most legible difference between the two approaches, and the cheapest
+to verify.
 
-### `overlap`
+### `projection, min → max`
 
-The average fraction of players two entries in the same portfolio share, over
-every pair. Two ten-player lineups differing by one player overlap 0.9.
+The lowest and highest entry in the draw, each as a fraction of the optimum. A
+solver enumerating by projection produces a very narrow band — its worst entry is
+close to its best — because "second best" means "the best one with a player
+swapped". Randomized construction produces a wide one.
 
-A portfolio of near-identical entries wins and loses as a block, which is the
-central objection to asking a solver for 150 lineups: "second best" means
-"the best one with a player swapped". Overlap is how that shows up as a number.
+### `top player's share`
 
-Computed over the first sixty entries, because it is quadratic in the count and
-the figure is stable long before that.
+The fraction of lineups containing the most-used player. Says how concentrated
+the draw is on a single name, which is what an exposure cap exists to control.
 
-### `in the money`
+Read this rather than the cap you requested: the cap is computed against lineups
+*requested*, so when yield falls short the realized share runs higher than asked.
 
-The measure that decides the argument, and the one with the most machinery behind
-it. In full:
+### `returned` / yield
 
-1. A **simulated universe** gives every player a score in each of a thousand
-   possible outcomes, correlated within a team so that a lineup stacking one team
-   moves together.
-2. A **field** of about a hundred thousand entries is built to stand in for
-   everyone else in the contest — chalk-seeking profiles, no ownership fade, and
-   built independently of the portfolio being judged.
-3. For each outcome separately, the **payout line** is the score that would finish
-   in the top 0.1% of that field *in that outcome*. It is a different number in
-   every outcome, because a high-scoring slate lifts everyone.
-4. An outcome counts if **any single entry** in the portfolio reaches that
-   outcome's line. `in the money = the fraction of outcomes that count.`
+How many of the requested lineups came back, **reported for both
+implementations**. A solver is complete and returns all of them. Randomized
+construction is not: when constraints bite it runs out of legal rosters it has
+not already found.
 
-So "84%" means: in 84% of the simulated ways the slate could break, at least one
-of the 150 entries would have finished in the top 0.1% of the field.
-
-Three things to hold onto. It is a **portfolio** measure — one entry cashing is
-enough, which is what makes covering different outcomes worth more than being
-individually excellent. The line is **per outcome**; against a fixed line the
-measure would mostly report whether the slate was high-scoring, which is no edge
-because every rival entry scored more in those worlds too. And the payout tier is
-deliberately harsh: at the top 20% or top 1% both approaches succeed in nearly
-every outcome and the number stops discriminating.
-
-### `Returned` / yield
-
-How many of the requested lineups came back. A solver is complete and always
-returns all of them. Randomized construction is not: when constraints bite it can
-run out of legal rosters it has not already found, and returning fewer is the
-honest answer. A method that keeps its throughput up by handing back half the
-portfolio has not been fast, and only this column shows it.
+Both are shown because a speedup dividing our time for 14 lineups by a solver's
+time for 25 is not a ratio.
 
 ### `no-good cuts`
 
-How the solver is made to produce a *different* lineup each time. After it returns
-a roster, a constraint is added saying that at least one of those players must be
-dropped next time — the previously found set may not all appear together. Solve
-again and you get the second-best roster, then the third, and so on.
+How the solver is made to produce a different lineup each time. After it returns a
+roster, a constraint is added saying at least one of those players must be dropped
+next time. Solve again for the second-best roster, then the third.
 
-It is the standard way to enumerate solutions in order and it is why the solver's
-portfolio looks the way it does: each entry is the best remaining roster after
-forbidding the last, which usually means the last one with a single player
-changed.
+It is the standard way to enumerate solutions in order, and it is why the solver's
+draw looks the way it does. It is not the only way to get diversity out of a
+solver — an overlap constraint bounding how many players a new lineup may share
+with each earlier one is the other common technique, and it is a fairer
+comparison at 150 entries. It is also markedly slower, which is why the
+contest-scale table exists.
+
+### Contest scale, and the extrapolated row
+
+The 10,000-lineup table measures this package directly and the solver on a
+25-lineup prefix. The solver's per-lineup cost is flat in the count — the
+accumulated no-good cuts are cheap next to the solve — so the full figure is that
+rate times 10,000, and it is labelled as an extrapolation rather than printed as
+a measurement.
 
 ## What a benchmark here does not tell you
 

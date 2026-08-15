@@ -8,8 +8,8 @@ portfolio selection, implemented in Rust.
 > release.
 
 New here? [**How it works**](https://kfreisen.github.io/mlb-dfs-solver/concepts/) is the
-background: what the problem actually is, why a solver is the wrong tool for it, and what each
-stage does. The short version follows.
+background: what the problem is, where a solver is and is not the right tool, and what each stage
+does. The short version follows.
 
 ## The problem
 
@@ -17,40 +17,29 @@ Two different problems, usually conflated:
 
 1. **Build one valid roster.** Pick players under a salary cap, filling positional slots, subject
    to group limits ("at most 6 from one team"). This is an integer program, and an ILP solver
-   answers it exactly.
+   answers it exactly. If that is your problem, use a solver — `benchmarks/baselines/milp.py`
+   contains one, and it wins.
 
-   Caps, minimums on how many distinct key values a lineup uses ("players from at least two
-   different games"), and stacks ("at least four hitters from one team") are all expressible.
-2. **Build a *portfolio* of rosters.** Pick 150 lineups that collectively do well across
-   simulated outcomes. Optimality per lineup is close to worthless here — 150 optimal lineups are
-   150 nearly identical lineups. What matters is diverse coverage of the outcome space.
+2. **Build many rosters.** A contest takes 150 entries; a field simulation takes a hundred
+   thousand. Asking a solver for the best lineup, forbidding it, and re-solving gives you the top
+   N by projection — a set built from a narrow slice of the slate, whose entries differ from one
+   another by a player or two.
 
-For (2), asking an ILP for 150 solutions optimizes the wrong thing. It returns the top 150
-rosters by projection, which differ from each other by a player or two and therefore win and lose
-together — one lineup entered a hundred and fifty times. `mlb_dfs_solver` generates a large
-randomized-greedy candidate pool and then selects from it by **lazy-greedy submodular
-maximization** (Minoux), scoring each candidate by what it adds to the portfolio rather than by
-its own merit.
-
-Speed is the smaller half of the argument, and worth stating precisely: a solver makes 150
-lineups in seconds, not minutes. What it cannot do is make the *candidate pool* — twenty thousand
-lineups by no-good cut is roughly forty minutes, and they would be the twenty thousand most
-similar lineups available.
-
-Cash games and tournaments get different objectives, because they want different things. A cash
-game pays a flat amount for beating a line, so entries are judged alone and diversity is actively
-wrong. A tournament pays almost nothing outside the extreme tail, so what matters is the chance
-that *some* entry reaches a winning score — and two entries winning in the same outcomes are
-wasted on each other. Neither has a diversity penalty: the portfolio objective already gives one
-for free, since a duplicate adds nothing by construction.
+`mlb_dfs_solver` does (2) by randomized greedy construction: perturb the objective, fill slots,
+repeat. It is a weak optimizer per lineup and a fast one per thousand.
 
 ```
 build_lineups()          score_lineups()            select_portfolio()
   what is legal      ->    what might happen    ->    what to enter
 ```
 
-You supply the middle one. Simulating a sport well means modelling that sport, and this library
-works for any of them — so it takes the `(players x outcomes)` matrix and does not produce it.
+You supply the middle stage — the `(players × outcomes)` matrix. Simulating a sport well means
+modelling that sport, and this library works for any of them.
+
+**What this package does not claim.** Nothing here tells you what a set of lineups would have
+won. That requires a simulator and a model of the field, neither of which is included, and a
+benchmark shipping its own would be grading its own fixture. The tables below measure generation
+time and describe what was generated. Which output suits your contest is your call.
 
 ## What's in it
 
@@ -67,8 +56,8 @@ works for any of them — so it takes the `(players x outcomes)` matrix and does
 - Stacking, with the stacked team drawn per attempt so a portfolio spreads across teams instead
   of piling onto one.
 - Lazy-greedy submodular portfolio selection over simulated outcomes, in cash and tournament
-  modes. You supply the simulation — a `(players x outcomes)` matrix — because a library that
-  also works for hockey has no business modelling how baseball scores.
+  modes. Greedy is within `1 - 1/e` of the optimal portfolio *under the matrix you supply* — a
+  guarantee on the search, not on the simulation. You supply the simulation.
 - Sport presets (`mlb_dfs_solver.presets`) shipped as data, not hardcoded branches.
 - Runtime AVX2 dispatch. Wheels are built portably; `mlb_dfs_solver.active_isa()` reports which path
   your machine took.
@@ -76,70 +65,79 @@ works for any of them — so it takes the `(players x outcomes)` matrix and does
 ## Benchmarks
 
 Measured against MILP formulations of the same problem (PuLP/CBC and OR-Tools), which live in
-[`benchmarks/baselines/`](https://github.com/kfreisen/mlb-dfs-solver/benchmarks/baselines) as real, tested, importable code — along with a
-pure-Python transcription of the greedy algorithm that serves as the parity oracle. The solver
-side models every rule the specification can express, so the comparison is a comparison and not a
-handicap.
+[`benchmarks/baselines/`](https://github.com/kfreisen/mlb-dfs-solver/tree/main/benchmarks/baselines)
+as real, tested, importable code — along with a pure-Python transcription of the greedy algorithm
+that serves as the parity oracle. The solver side models every rule the specification can
+express, so the comparison is a comparison and not a handicap.
+
+Two things are measured: how long generation takes, and what it generates. Nothing is scored
+against a simulated contest — see [what is not measured](#what-is-not-measured).
 
 The tables below are generated by `task bench` from the committed results, not written by hand.
 
 <!-- begin:benchmark-summary -->
 
-12th Gen Intel(R) Core(TM) i9-12900H, 20 cores · Linux 6.17.9-76061709-generic · measured 2026-08-12 against `da7a256`.
+12th Gen Intel(R) Core(TM) i9-12900H, 20 cores · Linux 6.17.9-76061709-generic · measured 2026-08-15 against `198957c-dirty`.
 
-**The whole job, both ways.** 150 entries against a 93,982-entry field, paying the top 0.1%. The solver's entries are individually perfect — they are the top lineups by projection — and the portfolio they form is worse, because lineups differing by one player win and lose together.
+**What each one generates.** + a 4-hitter team stack, 150 lineups from each. The solver returns the top rosters by projection, so its entries cluster at the optimum and are built from a fraction of the slate. Which output you want depends on the contest; both halves are visible here.
 
-| | Time | Median entry vs optimum | Overlap between entries | In the money |
+| | Time | Players used | Projection, min → max | Top player's share |
 | --- | ---: | ---: | ---: | ---: |
-| This package | 0.16 s | 94% | 36% | **84%** |
-| Solver + no-good cuts | 5.06 s | 100% | 55% | **42%** |
+| This package | 1 ms | **117 of 288** | 80% → 95% of optimum | 89% |
+| Solver + no-good cuts | 35.9 s | **57 of 288** | 98% → 100% of optimum | 83% |
+
+**At contest scale.** 10,000 lineups, 432-player slate, stacked, 60% exposure cap — the draw a field simulation or a candidate pool needs. Here the two are not alternatives.
+
+| | Lineups | Time |
+| --- | ---: | ---: |
+| This package | 8,650 | 312 ms |
+| Solver + no-good cuts | 25 measured | 6.9 s |
+| Solver, extrapolated | 10,000 | ~46 min |
 
 **Cost of each constraint.** Every implementation asked for the same portfolio on the same slate, one constraint added per row.
 
-| Constraint | This | Pure Python | CP-SAT | Speedup | Returned |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| salary cap and position slots only | 0.32 ms | 3.9 ms | 367 ms | 1,141× | 25 of 25 |
-| + team caps (6 total, 5 hitters) | 0.34 ms | 4.1 ms | 545 ms | 1,611× | 25 of 25 |
-| + salary floor | 0.34 ms | 4.1 ms | 560 ms | 1,656× | 25 of 25 |
-| + players from 2 distinct games | 0.34 ms | 4.5 ms | 611 ms | 1,775× | 25 of 25 |
-| + no hitters against the rostered pitcher | 0.62 ms | 7.0 ms | 847 ms | 1,367× | 25 of 25 |
-| + a 4-hitter team stack | 0.65 ms | 9.1 ms | 3,796 ms | 5,816× | 25 of 25 |
-| + two locked players | 0.66 ms | 13.6 ms | 1,884 ms | 2,858× | 25 of 25 |
-| + 40% exposure cap on every unlocked player | 0.85 ms | 56.0 ms | 1,186 ms | 1,392× | 14 of 25 |
-
-**Are they any good, and are they different?** Scored against the optimum CP-SAT proves, and compared with the solver's own portfolio at matched size.
-
-| Slate | Best vs optimum | Median vs optimum | Overlap within | Solver's overlap | Shared with solver | Identical |
+| Constraint | This | Pure Python | CP-SAT | Speedup | Ours | CP-SAT's |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| + salary floor | 96% | 91% | 52% | 55% | 10% | 0 |
-| + a 4-hitter team stack | 95% | 87% | 30% | 52% | 12% | 0 |
+| salary cap and position slots only | 0.32 ms | 4.0 ms | 371 ms | 1,145× | 25 of 25 | 25 of 25 |
+| + team caps (6 total, 5 hitters) | 0.33 ms | 4.1 ms | 551 ms | 1,646× | 25 of 25 | 25 of 25 |
+| + salary floor | 0.34 ms | 4.2 ms | 557 ms | 1,656× | 25 of 25 | 25 of 25 |
+| + players from 2 distinct games | 0.35 ms | 4.6 ms | 620 ms | 1,791× | 25 of 25 | 25 of 25 |
+| + no hitters against the rostered pitcher | 0.61 ms | 7.1 ms | 861 ms | 1,403× | 25 of 25 | 25 of 25 |
+| + a 4-hitter team stack | 0.61 ms | 9.3 ms | 3,897 ms | 6,435× | 25 of 25 | 25 of 25 |
+| + two locked players | 0.65 ms | 13.8 ms | 1,891 ms | 2,895× | 25 of 25 | 25 of 25 |
+| + 40% exposure cap on every unlocked player | 0.80 ms | 57.0 ms | 1,209 ms | 1,504× | 14 of 25 | 25 of 25 |
 
 <!-- end:benchmark-summary -->
 
-What those columns mean, since several read as more or less impressive than they are:
+What those columns mean:
 
 - **The optimum** — the single highest-projection legal roster, proved by a solver with no cuts
-  and no time limit. One lineup, not a portfolio.
-- **Median entry vs optimum** — add up each entry's projected points, take the middle one, divide
-  by the optimum. The solver wins this by construction: asked for 150 lineups it returns the 150
-  highest-projection rosters, so its median *is* the optimum. Reported because it is the honest
-  half of the comparison, and because it is not the half a contest pays on.
-- **Overlap** — the average share of players two entries in the same portfolio have in common.
-  Two ten-player lineups differing by one player overlap 90%. A portfolio of those wins and loses
-  as a block.
-- **In the money** — the fraction of simulated outcomes in which *at least one* entry would have
-  finished in the top 0.1% of an independently built ~100,000-entry field. The bar is computed
-  per outcome, because a high-scoring slate lifts everyone and clearing a fixed line in one is no
-  edge at all.
+  and no time limit. One lineup, not a portfolio. Projection arithmetic on the inputs both sides
+  were given, so it measures the search, not the projections.
+- **Players used** — distinct players appearing anywhere in the draw, out of the slate.
+- **Projection, min → max** — the lowest and highest entry, as fractions of the optimum. A solver
+  enumerating by projection produces a narrow band, since "second best" means "the best one with
+  a player swapped".
+- **Top player's share** — fraction of lineups containing the most-used player. Read this rather
+  than the exposure cap you requested; the two differ when yield falls short.
 - **No-good cuts** — how a solver is made to produce a different lineup each time: after each
-  roster, add a constraint that at least one of its players must be dropped next. It is why the
-  solver's entries resemble each other, each being the last one with a player changed.
-- **Returned** — how many of the requested lineups came back. A solver is complete; randomized
-  construction is not, and when constraints bite it can run out of legal rosters it has not
-  already found.
+  roster, add a constraint that at least one of its players must be dropped next.
+- **Returned** — how many requested lineups came back, for both implementations. A solver is
+  complete; randomized construction is not, and when constraints bite it runs out of legal
+  rosters it has not already found.
 
 Full definitions, the ladder, every implementation and the hardware:
 <https://kfreisen.github.io/mlb-dfs-solver/benchmarks/>
+
+### What is not measured
+
+No table here reports what a portfolio would have won, cashed, or returned. Those numbers need a
+simulator and a field model. This package supplies neither, so any such figure would come from a
+fixture written for the benchmark — and would move when the fixture was rewritten.
+
+That limits what can be shown, and it is the honest limit. A solver's 150 lineups are higher
+projected; these are drawn from more of the slate. Which is worth more depends on your contest
+and on how far you trust your projections.
 
 ## Install
 

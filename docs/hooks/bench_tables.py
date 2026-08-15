@@ -38,6 +38,24 @@ PLACEHOLDER = re.compile(r"^<!--\s*benchmarks\s*-->\s*$", re.MULTILINE)
 HEADLINE = re.compile(r"^<!--\s*headline\s*-->\s*$", re.MULTILINE)
 
 
+def duration(seconds: float) -> str:
+    """Format a duration at a readable scale.
+
+    These tables span six orders of magnitude — a sub-millisecond build next to
+    a solver run measured in hours — and one unit across all of them makes
+    either end unreadable.
+    """
+    if seconds < 1e-3:
+        return f"{seconds * 1e6:.0f} µs"
+    if seconds < 1.0:
+        return f"{seconds * 1e3:.0f} ms"
+    if seconds < 90.0:
+        return f"{seconds:.1f} s"
+    if seconds < 5400.0:
+        return f"{seconds / 60:.0f} min"
+    return f"{seconds / 3600:.1f} hr"
+
+
 def latest_results() -> list[dict[str, Any]]:
     """Return the newest committed result per hardware id, newest hardware first."""
     results_dir = REPO_ROOT / "benchmarks" / "results"
@@ -163,12 +181,13 @@ def render_result(result: dict[str, Any]) -> list[str]:
 
     if quality:
         lines += [
-            "#### Quality",
+            "#### What was generated",
             "",
-            "Speed on its own would be misleading: a generator of a hundred and fifty "
-            "near-identical lineups is worthless for a large-field contest, and so is "
-            "one that returns diverse rubbish. These are the numbers that say which "
-            "this is.",
+            "Speed alone says nothing about the output, so the output is described "
+            "here: how much of the slate each draw used, how concentrated it was on "
+            "individual players, and how far its rosters spread in projection. "
+            "Every figure is a property of the lineups and of the inputs supplied "
+            "— none of it scores a simulated contest.",
             "",
         ]
         for case_name, measurements in quality.items():
@@ -208,12 +227,12 @@ def render() -> str:
 
 
 def render_headline() -> str:
-    """Render the end-to-end comparison alone, for a narrative page."""
+    """Render the generated-lineups comparison alone, for a narrative page."""
     for result in latest_results():
         timed = [
             case
             for case in result["cases"]
-            if case["name"].startswith("pipeline/")
+            if case["name"] == "generated/stack"
             and case.get("quality")
             and case.get("metric", "seconds") == "seconds"
         ]
@@ -225,23 +244,26 @@ def render_headline() -> str:
 
         hw = result["hardware"]
         lines = [
-            f"*{ours.get('detail', '')}. Measured on {hw['cpu']}, {result['timestamp'][:10]}.*",
+            f"*{ours.get('detail', '')}, {ours['params']['requested']} lineups from "
+            f"each. Measured on {hw['cpu']}, {result['timestamp'][:10]}.*",
             "",
-            "| | Time | Median entry vs optimum | Overlap between entries | In the money |",
+            "| | Time | Players used | Projection, min → max | Top player's share |",
             "| --- | ---: | ---: | ---: | ---: |",
         ]
         for label, case in (("This package", ours), ("Solver + no-good cuts", solver)):
             q = case["quality"]
             lines.append(
-                f"| {label} | {case['median']:.2f} s | {q['median_ratio']:.0%} | "
-                f"{q['overlap']:.0%} | **{q['p_in_the_money']:.0%}** |"
+                f"| {label} | {duration(case['median'])} | "
+                f"**{q['distinct_players']} of {q['pool_size']}** | "
+                f"{q['worst_ratio']:.0%} → {q['best_ratio']:.0%} of optimum | "
+                f"{q['max_exposure']:.0%} |"
             )
         lines.append("")
         return "\n".join(lines)
 
     return (
         "!!! note\n"
-        "    No end-to-end benchmark has been committed yet — see "
+        "    No generated-lineup benchmark has been committed yet — see "
         "[How benchmarks work](methodology.md).\n"
     )
 

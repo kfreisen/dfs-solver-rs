@@ -1,33 +1,17 @@
 """Benchmark: how construction scales with the size of the pool asked for.
 
-The other files answer different questions. `bench_constraints.py` measures what
-each rule costs, `bench_pipeline.py` compares the whole job against the whole
-alternative, and `bench_quality.py` asks whether the output is any good. This one
-does the narrow thing its name says: how does building `n` lineups scale in `n`,
-for the kernel and for the pure-Python transcription that serves as its oracle.
+The narrow thing the name says: how does building `n` lineups scale in `n`, for
+the kernel and for the pure-Python transcription that serves as its oracle.
+`bench_constraints.py` measures what each rule costs; `bench_generated.py`
+describes what comes out.
 
-That scaling is the reason the pipeline works at all. Selection needs a pool far
-larger than the portfolio — tens of thousands of candidates to choose 150 from —
-so the cost of the ten-thousandth lineup matters much more than the cost of the
-first.
+That scaling is the reason selection is practical. It needs a pool far larger
+than the portfolio — tens of thousands of candidates to choose 150 from — so the
+cost of the ten-thousandth lineup matters more than the cost of the first.
 
-**A correction, recorded because the old numbers were published.** This file used
-to run on a slate of its own with only twelve distinct `(salary, projection)`
-pairs across ninety players — eleven exact clones of everybody. It reported CBC
-at "roughly 15-20 seconds per lineup" and noted that twenty lineups would not
-finish in fifteen minutes. Both were true of that slate and neither is true of
-the problem: the ties sent branch-and-bound hunting through interchangeable
-optima. On the shared realistic slate CBC produces 150 lineups in about eighteen
-seconds, some 119 ms each — roughly 676 times faster per lineup than the figure
-this file used to publish.
-
-So the solver is not slow at making a hundred and fifty lineups, and this package
-should not claim it is. What the solver cannot do is make *twenty thousand*: at
-119 ms each that is forty minutes, and they would be the top twenty thousand by
-projection, which is the most redundant set of lineups obtainable. The argument
-for randomized construction is throughput at candidate-pool scale and the
-portfolio that selection then builds — see `bench_pipeline.py` — not that a
-solver struggles with a portfolio.
+A solver is not slow at 150 lineups: on the shared slate CBC produces them in
+about eighteen seconds, roughly 119 ms each. It is at candidate-pool scale that
+the approaches separate, which is what `bench_generated.py` measures directly.
 
 Run with:
 

@@ -190,6 +190,24 @@ README_BEGIN = "<!-- begin:benchmark-summary -->"
 README_END = "<!-- end:benchmark-summary -->"
 
 
+def _duration(seconds: float) -> str:
+    """Format a duration at a readable scale.
+
+    The tables here span six orders of magnitude — a sub-millisecond build next
+    to a solver run measured in hours — and one unit across all of them makes
+    either end unreadable.
+    """
+    if seconds < 1e-3:
+        return f"{seconds * 1e6:.0f} µs"
+    if seconds < 1.0:
+        return f"{seconds * 1e3:.0f} ms"
+    if seconds < 90.0:
+        return f"{seconds:.1f} s"
+    if seconds < 5400.0:
+        return f"{seconds / 60:.0f} min"
+    return f"{seconds / 3600:.1f} hr"
+
+
 def readme_summary(report: dict[str, Any]) -> str:
     """Render the headline tables for the README.
 
@@ -211,35 +229,62 @@ def readme_summary(report: dict[str, Any]) -> str:
         "",
     ]
 
-    # Timed pipeline cases only. The head-to-head case shares the prefix, carries
-    # a differently shaped `quality` bag and is not a timing, so including it
-    # here would overwrite the row it is meant to summarize.
-    pipeline = {
+    # What each implementation generates, at portfolio size. Timed cases only:
+    # the head-to-head case shares the prefix, carries a differently shaped
+    # `quality` bag and is not a timing.
+    generated = {
         c["impl"]: c
         for c in report["cases"]
-        if c["name"].startswith("pipeline/")
+        if c["name"] == "generated/stack"
         and c.get("quality")
         and c.get("metric", "seconds") == "seconds"
     }
-    ours, solver = pipeline.get("slatekit_rust"), pipeline.get("milp_ortools_cpsat")
+    ours, solver = generated.get("slatekit_rust"), generated.get("milp_ortools_cpsat")
     if ours and solver:
-        detail = ours.get("detail", "")
         lines += [
-            f"**The whole job, both ways.** {detail}. The solver's entries are "
-            "individually perfect — they are the top lineups by projection — and "
-            "the portfolio they form is worse, because lineups differing by one "
-            "player win and lose together.",
+            f"**What each one generates.** {ours.get('detail', '')}, "
+            f"{ours['params']['requested']} lineups from each. The solver returns "
+            "the top rosters by projection, so its entries cluster at the optimum "
+            "and are built from a fraction of the slate. Which output you want "
+            "depends on the contest; both halves are visible here.",
             "",
-            "| | Time | Median entry vs optimum | Overlap between entries | In the money |",
+            "| | Time | Players used | Projection, min → max | Top player's share |",
             "| --- | ---: | ---: | ---: | ---: |",
         ]
         for label, case in (("This package", ours), ("Solver + no-good cuts", solver)):
             q = case["quality"]
             lines.append(
-                f"| {label} | {case['median']:.2f} s | {q['median_ratio']:.0%} | "
-                f"{q['overlap']:.0%} | **{q['p_in_the_money']:.0%}** |"
+                f"| {label} | {_duration(case['median'])} | "
+                f"**{q['distinct_players']} of {q['pool_size']}** | "
+                f"{q['worst_ratio']:.0%} → {q['best_ratio']:.0%} of optimum | "
+                f"{q['max_exposure']:.0%} |"
             )
         lines.append("")
+
+    contest = {
+        c["impl"]: c
+        for c in report["cases"]
+        if c["name"].startswith("contest/") and c.get("metric", "seconds") == "seconds"
+    }
+    ours, solver = contest.get("slatekit_rust"), contest.get("milp_ortools_cpsat")
+    if ours and solver:
+        # The solver is measured on a prefix; its full cost is arithmetic on that
+        # rate and is labelled as such rather than presented as a measurement.
+        prefix = solver["params"]["requested"]
+        target = solver["params"].get("extrapolated_to", 0)
+        per_lineup = solver["median"] / max(prefix, 1)
+        lines += [
+            f"**At contest scale.** {ours.get('detail', '')} — the draw a field "
+            "simulation or a candidate pool needs. Here the two are not "
+            "alternatives.",
+            "",
+            "| | Lineups | Time |",
+            "| --- | ---: | ---: |",
+            f"| This package | {ours['params']['produced']:,} | {_duration(ours['median'])} |",
+            f"| Solver + no-good cuts | {prefix} measured | {_duration(solver['median'])} |",
+            f"| Solver, extrapolated | {target:,} | ~{_duration(per_lineup * target)} |",
+            "",
+        ]
 
     ladder = [c for c in report["cases"] if c["name"].startswith("constraints/")]
     if ladder:
@@ -250,8 +295,11 @@ def readme_summary(report: dict[str, Any]) -> str:
             "**Cost of each constraint.** Every implementation asked for the same "
             "portfolio on the same slate, one constraint added per row.",
             "",
-            "| Constraint | This | Pure Python | CP-SAT | Speedup | Returned |",
-            "| --- | ---: | ---: | ---: | ---: | ---: |",
+            # Both yields, not one. A speedup that divides our time for 14
+            # lineups by the solver's time for 25 is not a ratio, and a single
+            # "Returned" column silently invited exactly that reading.
+            "| Constraint | This | Pure Python | CP-SAT | Speedup | Ours | CP-SAT's |",
+            "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
         ]
         for name, impls in by_case.items():
             ours = impls.get("slatekit_rust")
@@ -271,8 +319,15 @@ def readme_summary(report: dict[str, Any]) -> str:
                 else "—"
             )
             returned = f"{params.get('produced', '—')} of {params.get('requested', '—')}"
+            solver_params = solver.get("params", {}) if solver else {}
+            solver_returned = (
+                f"{solver_params.get('produced', '—')} of {solver_params.get('requested', '—')}"
+                if solver
+                else "—"
+            )
             lines.append(
-                f"| {detail} | {ours_ms} | {python_ms} | {solver_ms} | {speedup} | {returned} |"
+                f"| {detail} | {ours_ms} | {python_ms} | {solver_ms} | {speedup} | "
+                f"{returned} | {solver_returned} |"
             )
         lines.append("")
 

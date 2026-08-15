@@ -1,13 +1,19 @@
-"""The slate and the constraint ladder both benchmarks are measured on.
+"""The slate, the constraint ladder, and the vocabulary for describing a draw.
 
-Shared so that a speed number and a quality number refer to the same problem. If
-each benchmark built its own slate, the two tables could not be read together —
-and the interesting question is precisely whether the fast one is also good.
+Shared so every benchmark refers to the same problem. If each built its own
+slate, a timing table and a description of the output could not be read together.
 
-The ladder is the point of this module. A single "is it fast?" number says nothing
-about a feature, because every constraint added is work the kernel has to do and
-work the solver has to do, and they do not scale alike. Walking the rungs one at a
-time is what shows where each approach starts to struggle.
+Two things live here.
+
+**The ladder.** A single "is it fast?" number says nothing about a feature: every
+constraint added is work for the kernel and work for the solver, and they do not
+scale alike. Walking the rungs one at a time shows where each approach struggles.
+
+**`describe_lineups`.** The measures a draw is characterized by — player
+coverage, exposure, the spread of projections. Deliberately no simulation, no
+field model, and no payout: those need inputs this package does not supply, so a
+benchmark computing them would be reporting on a fixture written here rather than
+on either implementation.
 """
 
 from __future__ import annotations
@@ -16,7 +22,6 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 import numpy as np
-from mlb_dfs_solver import JitterProfile, build_lineups
 from mlb_dfs_solver.pool import PlayerPool
 from mlb_dfs_solver.presets import DK_MLB_CLASSIC
 from mlb_dfs_solver.spec import ConflictRule, GroupConstraint, RosterSpec
@@ -25,17 +30,21 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 __all__ = [
+    "CONTEST_EXPOSURE_CAP",
+    "CONTEST_PER_POSITION",
+    "CONTEST_RUNG",
     "Rung",
-    "build_field",
     "build_ladder",
-    "contest_spec",
+    "describe_lineups",
     "lineup_overlap",
     "make_slate",
-    "payout_line",
     "rung_by_name",
 ]
 
 HITTER_SLOTS = ("C", "SS", "2B", "3B", "1B", "OF")
+
+# The floor the ladder's `floor` rung and everything above it build under.
+SALARY_FLOOR = 49_000
 
 # Thirty-two per position, outfield tripled, so 288 players — the size of a real
 # DraftKings MLB main slate. Sized up twice, both times because a thin slate was
@@ -178,7 +187,10 @@ def build_ladder(pool: PlayerPool) -> list[Rung]:
     # ladder starts somewhere both implementations find easy.
     bare = replace(DK_MLB_CLASSIC, salary_floor=0, groups=())
     caps = replace(bare, groups=DK_MLB_CLASSIC.groups)
-    floor = replace(caps, salary_floor=DK_MLB_CLASSIC.salary_floor)
+    # A floor is strategy, not a DraftKings rule, so the preset no longer carries
+    # one and the ladder states it. 49_000 of a 50_000 cap is a tight but
+    # ordinary setting: leaving salary unspent is usually a mistake.
+    floor = replace(caps, salary_floor=SALARY_FLOOR)
     games = replace(
         floor,
         groups=(*floor.groups, GroupConstraint(key="game", min_distinct=2)),
@@ -252,6 +264,92 @@ def rung_by_name(pool: PlayerPool, name: str) -> Rung:
     raise KeyError(msg)
 
 
+# --- Contest scale -----------------------------------------------------------
+#
+# A field-sized draw needs a config that can actually supply one. The 288-player
+# slate tops out at 6,094 distinct lineups under the stack rung, so asking it for
+# 10,000 measures the ceiling rather than throughput. 48 per position reaches
+# 10,000 with room over, and 432 players is a realistic size for a large MLB main
+# slate.
+CONTEST_PER_POSITION = 48
+# Stacked, because a real field stacks. This is the one place a stack is not our
+# strategy: it is a description of what the crowd does.
+CONTEST_RUNG = "stack"
+# Without a cap one player reaches 82.9% of the draw, which no real field shows.
+#
+# Read the realized exposure this produces, not the number requested. The limit
+# is `floor(cap x lineups *requested*)`, and a cap lowers yield, so the fraction
+# of what actually comes back is higher than the cap asked for -- at 60% here,
+# 8,650 lineups come back and the top player holds 69.4% of them.
+CONTEST_EXPOSURE_CAP = 0.6
+
+
+def describe_lineups(
+    pool: PlayerPool, spec: RosterSpec, lineups: np.ndarray, optimum: float | None = None
+) -> dict[str, float | int]:
+    """What a set of generated lineups looks like.
+
+    Every figure is a property of the lineups and the inputs the caller supplied.
+    Nothing here simulates an outcome, models a field, or scores a contest: those
+    numbers describe a fixture rather than a package, and two implementations
+    cannot be separated on them without the reader taking the fixture on trust.
+
+    What is left is still the whole comparison. A method that returns 150 rosters
+    built from 33 players, all projecting within a tenth of a point of each other,
+    is doing something visibly different from one that returns 150 built from 117
+    -- and both halves of that are checkable by reading the lineups.
+
+    Args:
+        pool: The players the lineups index into.
+        spec: Supplies slot multipliers for the salary and projection totals.
+        lineups: An `(n, roster_size)` index array.
+        optimum: The proven best single roster's projection, if known. Adds the
+            three `*_ratio` fields.
+
+    Returns:
+        A flat mapping, ready to be recorded as a benchmark's `quality` payload.
+    """
+    n = len(lineups)
+    if n == 0:
+        return {"lineups": 0}
+
+    projections = pool.projection_of(lineups, spec)
+    salaries = pool.salary_of(lineups, spec)
+    counts = np.bincount(np.asarray(lineups).ravel(), minlength=len(pool))
+    exposure = counts / n
+    used = exposure[exposure > 0]
+
+    teams = pool.keys["team"]
+    blocks = [
+        max(np.bincount(teams[row][teams[row] >= 0]).tolist() or [0]) for row in np.asarray(lineups)
+    ]
+
+    described: dict[str, float | int] = {
+        "lineups": int(n),
+        # Coverage: how much of the slate the method is willing to touch.
+        "distinct_players": int((exposure > 0).sum()),
+        "pool_size": int(len(pool)),
+        "players_over_50pct": int((exposure > 0.5).sum()),
+        "players_over_20pct": int((exposure > 0.2).sum()),
+        "max_exposure": round(float(exposure.max()), 4),
+        "median_exposure_used": round(float(np.median(used)), 4),
+        # Spread: a portfolio whose entries all project alike is one entry.
+        "projection_min": round(float(projections.min()), 2),
+        "projection_median": round(float(np.median(projections)), 2),
+        "projection_max": round(float(projections.max()), 2),
+        "salary_min": int(salaries.min()),
+        "salary_median": int(np.median(salaries)),
+        "salary_max": int(salaries.max()),
+        "team_block_median": int(np.median(blocks)),
+        "team_block_max": int(max(blocks)),
+    }
+    if optimum:
+        described["best_ratio"] = round(float(projections.max()) / optimum, 4)
+        described["median_ratio"] = round(float(np.median(projections)) / optimum, 4)
+        described["worst_ratio"] = round(float(projections.min()) / optimum, 4)
+    return described
+
+
 def lineup_overlap(a: Sequence[int], b: Sequence[int]) -> float:
     """Fraction of players two lineups share.
 
@@ -262,77 +360,3 @@ def lineup_overlap(a: Sequence[int], b: Sequence[int]) -> float:
     if not a:
         return 0.0
     return len(set(a) & set(b)) / len(set(a))
-
-
-# A crowd, not a copy of us. Mostly chasing chalk, some semi-sharp, some
-# careless. Real fields are heterogeneous, and a uniform one is the wrong shape:
-# a field built entirely from one profile converged to under 5,000 distinct
-# lineups here, where this mixture reaches six figures.
-CROWD_PROFILES = (
-    JitterProfile(ceiling=(0.1, 0.6), leverage=(0.0, 0.1)),
-    JitterProfile(ceiling=(0.3, 1.2), leverage=(0.1, 0.5)),
-    JitterProfile(ceiling=(0.0, 0.4), leverage=(0.0, 0.0)),
-)
-
-
-def contest_spec(spec: RosterSpec) -> RosterSpec:
-    """The rules an operator enforces, with our strategy stripped out.
-
-    What the field must obey and what we choose to obey are different sets, and
-    conflating them makes the crowd an echo of us. Caps and distinct-game
-    minimums are contest rules; a four-hitter stack and a "no hitters against my
-    pitcher" rule are preferences nobody else is bound by.
-
-    Measured, it is not a small distinction: the same slate supports 3,024
-    distinct lineups under our strategy and 21,681 under the contest's rules
-    alone. A field built on the narrow set is seven times too small, and its
-    upper quantiles — the payout lines — are drawn from far too few entries.
-    """
-    return replace(
-        spec,
-        conflicts=(),
-        groups=tuple(group for group in spec.groups if not group.min_stack),
-    )
-
-
-def build_field(
-    pool: PlayerPool, spec: RosterSpec, n_entries: int = 200_000, seed: int = 99
-) -> np.ndarray:
-    """Lineups other people entered.
-
-    The single most important thing a contest simulation needs, and the thing
-    that was wrong here longest: measuring our portfolio against a quantile of
-    *our own* candidates is circular. A 99th-percentile bar drawn from our pool
-    is exceeded by 1% of our pool by construction, so covering every outcome is
-    trivial and the resulting "probability we win" was 1.000 no matter what we
-    did — a number that cannot distinguish a good portfolio from a bad one.
-
-    Built with the crowd's profiles rather than ours: no ownership fade, because
-    the field is who creates ownership. Whatever it returns is a stand-in for a
-    real field model, but an independent one, which is the property that matters.
-
-    Pass it a contest specification, not a strategy one — see
-    [`contest_spec`][]. It is applied here rather than left to the caller because
-    forgetting is silent: the field simply comes back smaller and its payout
-    lines come from too few entries.
-    """
-    return build_lineups(
-        pool,
-        contest_spec(spec),
-        num_lineups=n_entries,
-        seed=seed,
-        noise=0.45,
-        attempts_per_lineup=4,
-        profiles=list(CROWD_PROFILES),
-    )
-
-
-def payout_line(field_scores: np.ndarray, top_fraction: float) -> np.ndarray:
-    """The score needed to finish in the top `top_fraction` of the field.
-
-    Per outcome, because the bar moves with the slate — see the note on
-    `Objective` in the kernel. `top_fraction=0.001` is a top-heavy tournament
-    where only the first tenth of a percent is worth anything; `0.2` is closer to
-    a double-up.
-    """
-    return np.quantile(field_scores, 1.0 - top_fraction, axis=0).astype(np.float32)

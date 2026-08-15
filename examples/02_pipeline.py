@@ -361,12 +361,18 @@ def _(cash, cash_line, gpp, mo, np, pool, score_lineups, spec, universe, win_lin
 
     mo.md(
         f"""
-        | Portfolio | Entries | Mean salary | Result |
-        | --- | ---: | ---: | ---: |
-        | Tournament | {len(gpp)} | ${float(np.mean(pool.salary_of(gpp, spec))):,.0f} | some entry in the top 0.1% in **{float((gpp_scores.max(axis=0) >= win_line).mean()):.1%}** of outcomes |
-        | Cash | {len(cash)} | ${float(np.mean(pool.salary_of(cash, spec))):,.0f} | the average entry beats the field in **{float((cash_scores >= cash_line).mean()):.1%}** of outcomes |
+        | Portfolio | Entries | Mean salary | Players used | Against this simulation |
+        | --- | ---: | ---: | ---: | ---: |
+        | Tournament | {len(gpp)} | ${float(np.mean(pool.salary_of(gpp, spec))):,.0f} | {len(set(gpp.ravel().tolist()))} | some entry clears the line in **{float((gpp_scores.max(axis=0) >= win_line).mean()):.1%}** of outcomes |
+        | Cash | {len(cash)} | ${float(np.mean(pool.salary_of(cash, spec))):,.0f} | {len(set(cash.ravel().tolist()))} | the average entry clears it in **{float((cash_scores >= cash_line).mean()):.1%}** of outcomes |
 
         Two different jobs, from one candidate pool.
+
+        Read the last column narrowly. It says the two modes optimize different
+        things and each wins on its own — which is the point of having both. It
+        says nothing about real contests: the simulator in section 5 is Gaussian
+        noise and the field in section 6 is this same builder run again. Replace
+        both before these percentages mean anything outside this notebook.
         """
     )
     return cash_scores, gpp_scores

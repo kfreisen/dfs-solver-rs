@@ -49,8 +49,18 @@ def _(mo):
 
 @app.cell
 def _(DK_MLB_CLASSIC, PlayerPool):
+    # Two things here are load bearing, and getting either wrong makes the whole
+    # notebook measure an artefact rather than the package.
+    #
+    # Projections are distinct per player. The obvious `4.0 + (k % 12) * 1.2`
+    # gives twelve distinct (salary, projection) pairs and clones of everybody,
+    # which makes "distinct lineups" mean swapping interchangeable players.
+    #
+    # Projection is not a monotone function of salary either. If it were, every
+    # lineup spending the cap would score about the same and there would be no
+    # optimization to do. Mispriced players are the reason this problem exists.
     records = []
-    for position in ("P", "C", "1B", "2B", "3B", "SS", "OF"):
+    for position_index, position in enumerate(("P", "C", "1B", "2B", "3B", "SS", "OF")):
         count = 30 if position == "OF" else 10
         for k in range(count):
             records.append(
@@ -58,10 +68,19 @@ def _(DK_MLB_CLASSIC, PlayerPool):
                     "name": f"{position}-{k}",
                     "positions": (position,),
                     "salary": 2500 + (k % 12) * 750,
-                    "projection": 4.0 + (k % 12) * 1.2,
+                    "projection": (
+                        4.0
+                        + (k % 12) * 1.2
+                        + (k // 12) * 0.29
+                        + position_index * 0.037
+                        + (((k * 13 + position_index * 5) % 7) - 3) * 0.9
+                    ),
                     "stddev": 3.0 + (k % 4),
                     "ownership": ((k * 7) % 30) / 100.0,
-                    "team": f"TM{k % 10}",
+                    # Not `k % 10`: salary is driven by k, so that mapping puts
+                    # every expensive player on one team and makes every
+                    # team-shaped constraint measure the price bracket instead.
+                    "team": f"TM{(7 * k + 3 * position_index) % 10}",
                 }
             )
 
@@ -82,24 +101,37 @@ def _(mo):
         differing only in which slots they count. Five hitters plus that team's
         starting pitcher is a legal and popular shape, which is why the second
         constraint cannot simply be derived from the first.
+
+        Presets carry only what the operator enforces. DraftKings sets no salary
+        floor, so neither does the preset — a floor is a strategy, and one is
+        added below the way you would add any other.
         """
     )
     return
 
 
 @app.cell
-def _(DK_MLB_CLASSIC, mo):
+def _(DK_MLB_CLASSIC):
+    from dataclasses import replace
+
+    # Leaving salary unspent is usually a mistake, so require nearly all of it.
+    spec = replace(DK_MLB_CLASSIC, salary_floor=49_000)
+    return replace, spec
+
+
+@app.cell
+def _(mo, spec):
     mo.md(
         "```\n"
         + "\n".join(
             [
-                f"roster size : {DK_MLB_CLASSIC.roster_size}",
-                f"slots       : {' '.join(DK_MLB_CLASSIC.slot_names())}",
-                f"salary      : {DK_MLB_CLASSIC.salary_floor} – {DK_MLB_CLASSIC.salary_cap}",
+                f"roster size : {spec.roster_size}",
+                f"slots       : {' '.join(spec.slot_names())}",
+                f"salary      : {spec.salary_floor:,} – {spec.salary_cap:,}",
                 *[
                     f"group       : max {g.max_count} per {g.key}"
                     + (f", counting {', '.join(g.slots)}" if g.slots else ", counting every slot")
-                    for g in DK_MLB_CLASSIC.groups
+                    for g in spec.groups
                 ],
             ]
         )
@@ -124,16 +156,16 @@ def _(mo):
 
 
 @app.cell
-def _(DK_MLB_CLASSIC, build_lineups, pool):
-    lineups = build_lineups(pool, DK_MLB_CLASSIC, num_lineups=500, seed=1)
+def _(build_lineups, pool, spec):
+    lineups = build_lineups(pool, spec, num_lineups=500, seed=1)
     lineups.shape
     return (lineups,)
 
 
 @app.cell
-def _(DK_MLB_CLASSIC, lineups, mo, pool):
-    salaries = pool.salary_of(lineups, DK_MLB_CLASSIC)
-    projections = pool.projection_of(lineups, DK_MLB_CLASSIC)
+def _(lineups, mo, pool, spec):
+    salaries = pool.salary_of(lineups, spec)
+    projections = pool.projection_of(lineups, spec)
 
     mo.md(
         f"""
@@ -144,7 +176,7 @@ def _(DK_MLB_CLASSIC, lineups, mo, pool):
         | salary | {salaries.min():,} | {int(sorted(salaries)[len(salaries) // 2]):,} | {salaries.max():,} |
         | projection | {projections.min():.1f} | {sorted(projections)[len(projections) // 2]:.1f} | {projections.max():.1f} |
 
-        Every one is inside the salary band `{DK_MLB_CLASSIC.salary_floor:,}`–`{DK_MLB_CLASSIC.salary_cap:,}`,
+        Every one is inside the salary band `{spec.salary_floor:,}`–`{spec.salary_cap:,}`,
         fills every slot with an eligible player, and respects both team caps.
         """
     )
@@ -159,14 +191,15 @@ def _(mo):
 
         Because the pool is the product, not any single lineup.
 
-        An ILP solver returns the *optimal* lineup, and it beats this on that one
+        An ILP solver returns the *optimal* lineup and beats this on that one
         lineup. Ask it for 500 and it returns the optimum, then the second best,
-        then the third — differing by a player or two each time. In a large-field
-        contest, where the payoff is convex, 500 near-identical lineups is close to
-        the worst thing you can enter.
+        then the third — each the previous one with a player swapped, and all of
+        them drawn from a narrow slice of the slate.
 
-        Diversity is the thing being bought here, so it is worth measuring rather
-        than asserting.
+        Whether that set or this one suits your contest is not something this
+        notebook can answer; it depends on the payout structure and on how far
+        you trust the projections. What it can show is how the two differ, so
+        the numbers below describe this pool rather than grading it.
         """
     )
     return
@@ -184,7 +217,11 @@ def _(lineups, mo, pool):
         - A given lineup shares **{mean_overlap:.1f} of 10** players with the first one
           on average.
 
-        A solver-with-cuts pool would sit far nearer 9 of 10.
+        Both numbers are properties of what came back — count them off the array
+        yourself. The equivalent figures for a solver enumerating with no-good
+        cuts are on the
+        [benchmarks page](https://kfreisen.github.io/mlb-dfs-solver/benchmarks/),
+        measured rather than asserted here.
         """
     )
     return distinct_players, mean_overlap, overlaps

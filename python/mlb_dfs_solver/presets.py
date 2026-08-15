@@ -55,11 +55,10 @@ DK_MLB_CLASSIC = RosterSpec(
         Slot("P", ("P",), count=2),
     ),
     salary_cap=50_000,
-    # A floor is unusual — DraftKings does not impose one. It is here because
-    # leaving salary unspent is almost always a mistake in a large-field contest,
-    # and making it a constraint is cheaper than filtering afterwards. Set it to 0
-    # to disable.
-    salary_floor=49_000,
+    # DraftKings imposes no floor, so neither does this. Leaving salary unspent is
+    # usually a mistake, but that is a strategy and belongs with the caller's
+    # other strategy — `replace(DK_MLB_CLASSIC, salary_floor=49_000)` sets one.
+    salary_floor=0,
     groups=(
         GroupConstraint(key="team", max_count=6),
         # Five hitters plus that team's starting pitcher is a common and legal

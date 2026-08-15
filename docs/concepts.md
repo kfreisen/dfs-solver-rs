@@ -26,37 +26,37 @@ money.
 
 That distinction is the whole package.
 
-## Why asking a solver for 150 lineups does not work
+## What a solver gives you for 150 lineups
 
 The obvious extension is to ask the solver for the best lineup, forbid it, ask
-again, and repeat. This works and produces the top 150 rosters by projection. It
-is also close to the worst thing you could enter.
+again, and repeat. This works, and produces the top 150 rosters by projection.
 
-Those 150 lineups differ from one another by a player or two, because that is
-what "second best" means. They therefore win together and lose together. If the
-expensive shortstop they all share has a quiet night, all 150 entries fail at
-once. You have bought one lineup a hundred and fifty times and paid a hundred and
-fifty entry fees for it.
-
-Here is that measured, against an independent field, both approaches asked for
-the same 150 entries:
+What that set looks like is the thing to understand, and it is directly
+observable — no simulation required:
 
 <!-- headline -->
 
-Each column is defined precisely in
-[what the columns mean](methodology.md#what-the-columns-mean) — in particular
-"in the money", which has a field model and a per-outcome payout line behind it.
+The solver's entries are individually better: it returns the top rosters by
+projection, so its median entry sits at or near the optimum and ours does not.
+The same run builds those 150 rosters out of a fraction of the slate, and its
+best and worst entries differ by a fraction of a point. Ours spread wider and
+draw on roughly twice as many players.
 
-Every individual lineup the solver produced is *better* than ours — its median
-entry is the optimum, because it returned the top 150 by projection. The
-portfolio is worse. Per-lineup quality and portfolio quality are close to
-opposites here, and only one of them is what a contest pays for.
+That is the trade, stated as two properties of the output rather than as a
+verdict. Which one you want depends on the contest and on how much you trust
+your projections — if they are exactly right, the solver's set is correct and
+diversity is a cost. Neither of those is something this package can tell you.
 
-Speed is the smaller half of the argument and worth stating precisely: a solver
-makes 150 lineups in seconds. What it cannot make is the *candidate pool* the
-next section needs — twenty thousand lineups by no-good cut is roughly forty
-minutes of solving, and they would be the twenty thousand most similar lineups
-available.
+**What is not on the table**: any claim about what these lineups would have
+scored. Scoring needs a simulator and a field model, both of which this package
+deliberately does not provide, and a benchmark that supplies its own is grading
+its own fixture. See [what is not here](#what-is-not-here).
+
+Where the two stop being alternatives is scale. The next stage needs a candidate
+pool far larger than the portfolio, and at ten thousand lineups the solver's
+per-lineup cost puts it in a different category — hours against a fraction of a
+second. That, rather than any quality argument, is why construction is
+randomized.
 
 ## Three stages
 
@@ -122,6 +122,13 @@ P = NP — so greedy is not a shortcut here, it is the answer. And Minoux's *laz
 evaluation* can skip recomputing candidates that cannot possibly win this round,
 producing an identical portfolio for much less work.
 
+Both are properties of the algorithm, provable from the objective. Note what they
+are guarantees *about*: the portfolio is within `1 - 1/e` of the best portfolio
+**under the outcome matrix you supplied**. If that matrix is a poor model of the
+sport, selection will optimize against it faithfully and the guarantee will hold
+exactly while the result is worthless. The bound is on the search, not on the
+simulation — and the simulation is yours.
+
 ## Cash and tournaments are different problems
 
 The most important knob is `mode`, and it has no default, because the two
@@ -144,25 +151,24 @@ makes ranking exactly optimal rather than an approximation.
 
 ## The line, and why it is a vector
 
-Every mode needs a score to beat, and it is one value **per outcome**, not a
-constant. This is the single easiest thing to get wrong, and getting it wrong
-silently produces numbers that look fine.
+Every mode needs a score to beat, and it should be one value **per outcome**, not
+a constant.
 
-On a realistic slate the field's median score swings between simulated outcomes
-several times more than lineups differ from each other within any one outcome.
-The world matters more than the roster. Judged against a fixed bar, "did this
-lineup cash?" turns out to be almost entirely a question of whether it was a
-high-scoring slate — and that is no edge at all, because every rival entry also
+A slate's total scoring varies far more between outcomes than lineups vary within
+any one outcome. Against a fixed bar, "did this lineup clear it?" mostly asks
+"was it a high-scoring slate?" — which is no edge, because every rival entry also
 scored more in those worlds. What pays is beating the field *in the same world*.
 
-The benchmark records the size of that swing, under `win_line_spread`; it is
-about half the score of an entire lineup.
+Take the bar from a model of the field: the entries other people submit. That is
+what you are ranked against, and it is the input that makes the whole selection
+stage mean anything.
 
-[`field_line`][mlb_dfs_solver.select.field_line] reads a per-outcome bar off a
-score matrix. Better still is a bar computed from a model of the actual field —
-the entries other people submit — because that is what you are being ranked
-against. A benchmark that draws the line from its own candidates is measuring a
-circle, and will report success no matter what it does.
+[`field_line`][mlb_dfs_solver.select.field_line] will read a per-outcome quantile
+off a score matrix, but note what it computes if you hand it your own candidates
+— a bar your own pool exceeds by construction. Use it on a field matrix, or
+compute the quantile yourself. **This package does not model a field**, so if you
+have no field model, the line is the weakest part of your pipeline and no amount
+of selection machinery repairs it.
 
 ## What a contest can require
 
@@ -180,7 +186,7 @@ path, and nothing in the package branches on which sport it is looking at.
 | "At least 4 hitters from one team" | `GroupConstraint(min_stack=4)` |
 | "No hitters against my pitcher" | [`ConflictRule`][mlb_dfs_solver.spec.ConflictRule] |
 | Locked players | `build_lineups(locks=...)` |
-| Exposure caps | `build_lineups(max_exposure=...)` |
+| Exposure caps | `select_portfolio(max_exposure=...)`, or `build_lineups(max_exposure=...)` |
 
 The first four collapse into one another, which is what makes this general: "at
 most 6 from a team" and "at most 5 hitters from a team" are the same constraint
@@ -280,18 +286,56 @@ inputs at all. Most are already reachable:
 | Prefer popular players | a negative `leverage` exponent — it inverts the fade |
 | Concentrate on one team | `GroupConstraint(min_stack=...)` |
 | Avoid a pitcher's opposing hitters | [`ConflictRule`][mlb_dfs_solver.spec.ConflictRule] |
-| Cap how often a player is used | `max_exposure` |
+| Cap how often a player is used | `select_portfolio(max_exposure=...)` — see [exposure caps](#exposure-caps) |
 | Always use a player | `locks` |
 | Weight a player up or down | adjust their projection before building |
-
-What genuinely cannot be said today is an exposure *floor* — "roster the ace in
-about 37% of entries". Caps bound from above and locks pin at 100%, with nothing
-in between. That is a missing feature rather than a missing column, and it is the
-shape most composition preferences turn out to have once you look at them.
 
 The division the rest of this follows: **player facts are columns, roster rules
 are the specification, portfolio rules are selection, and calibration constants
 live in the caller.**
+
+### Pricing
+
+`build_lineups(value_weight=...)` sets how strongly salary is priced into a
+player's rank, as a multiple of the pool's own points-per-dollar rate. It changes
+only the ordering; a lineup is still worth the sum of its players' projections.
+
+| `value_weight` | Effect |
+| --- | --- |
+| `0.0` | rank by projection alone. Overspends early and reaches the last slots with no budget; measured, the best candidate capped at 0.93 of the optimum however large the pool grew |
+| `0.75` (default) | flat quality through `1.0`, with more of the pool retained |
+| `1.0` | rank by surplus over what a point costs on average. Found the exact optimum on the slate it was tested against |
+| `1.25` | cliff. The candidate pool collapsed from 15,000 distinct lineups to 500, every attempt converging on the same cheap players |
+
+Pricing narrows the pool even at the default — a sharper objective makes attempts
+agree more often. On the benchmark slate the pool fell from 20,000 distinct
+lineups to 15,000 while every quality measure improved.
+
+### Exposure caps
+
+Caps are available at both stages, and **the stage matters more than the number.**
+
+`build_lineups(max_exposure=...)` applies the cap when parallel chunks are
+merged: over-cap lineups are discarded rather than rebuilt. That lowers yield,
+and because the limit is `floor(cap × lineups *requested*)`, a lower yield raises
+the realized share. Tightening the cap can therefore *increase* the exposure you
+actually get:
+
+| Requested cap | Lineups returned (of 10,000) | Realized top exposure |
+| ---: | ---: | ---: |
+| none | 10,000 | 82.9% |
+| 60% | 8,650 | 69.4% |
+| 40% | 5,930 | 67.5% |
+| 25% | 3,963 | 63.1% |
+
+`select_portfolio(max_exposure=...)` applies the cap while choosing from a pool
+you have already built, so it skips over-cap candidates instead of discarding
+them. Given a large enough pool it fills more of the portfolio and holds closer
+to the number you asked for.
+
+**Build uncapped, cap at selection.** Use the construction-stage cap only when
+you are not running selection at all, and read the realized exposure rather than
+trusting the requested one.
 
 ## What is not here
 
@@ -301,20 +345,24 @@ Stated plainly, because a library's gaps matter as much as its features.
 - **A field model.** The score that wins is a property of who else entered.
   Modelling that means ownership projections and a model of how the public
   builds — real work, and sport-specific.
-- **Payout curves.** Selection optimizes the probability of clearing a line, not
-  expected dollars across a payout structure. For a top-heavy tournament these
-  are close; for a flat one they are not.
 - **Minimums per key value.** "Every team used must contribute at least two" is
-  not expressible. Nobody has needed it.
-- **Value-aware construction.** The builder ranks by projection and never by
-  points per dollar, so on a slate with mispriced players its best candidate
-  plateaus short of the true optimum however many you generate — see
-  `best_ratio` on the benchmarks page. Selection cannot fix that; better
-  construction would.
+  not expressible.
+- **An exposure floor.** "Roster the ace in about 37% of entries." Caps bound
+  from above and locks pin at 100%, with nothing in between.
+- **An accurate exposure cap.** The limit is `floor(cap × lineups requested)`,
+  and a cap lowers yield, so the realized share exceeds the cap whenever fewer
+  lineups come back than were asked for. See [exposure caps](#exposure-caps).
 
 ## Reading the numbers
 
 Every figure on this page comes from [the benchmarks](benchmarks.md), which are
-run on a named machine and committed rather than measured in CI. The
-[methodology](methodology.md) page explains why, and what a benchmark here does
-and does not tell you.
+run on a named machine and committed rather than measured in CI.
+
+They measure two things and only two: **how long generation takes**, and **what
+it generates** — player coverage, exposure, the spread of projections, the
+rosters themselves. Both are properties of the output and of inputs you supply.
+
+They deliberately do not measure what a portfolio would have won. That needs a
+simulator and a field model, this package provides neither, and any benchmark
+that supplied its own would be reporting on that fixture. The
+[methodology](methodology.md) page covers the rest.
