@@ -56,9 +56,12 @@ tasks:
       - uv run --no-project --python 3.12 --with psutil tools/bench_report.py .benchmark.json --write
 
   bench-quick:
-    desc: Smoke-run the benchmarks, no timings recorded.
+    desc: Smoke-run the benchmarks, no timings recorded. Skips the slow case.
     cmds:
-      - uv run --group bench pytest benchmarks/ -q --benchmark-disable
+      # --benchmark-disable still executes each body once, so the contest-scale
+      # case -- ten thousand sequential CP-SAT solves -- has to be deselected
+      # rather than merely left untimed. `task bench` runs it.
+      - uv run --group bench pytest benchmarks/ -q --benchmark-disable -m "not slow"
 
   examples:
     desc: Execute every marimo example.

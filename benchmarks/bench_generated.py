@@ -221,12 +221,18 @@ def test_contrarian_profile_shifts_ownership(benchmark, portfolio_slate) -> None
     assert mean_ownership(contrarian) < mean_ownership(standard)
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("impl", ["mlb_dfs_solver_rust", "milp_ortools_cpsat"])
 def test_contest_scale(benchmark, contest_slate, impl: str) -> None:
     """A field-sized draw: 10,000 lineups under a stacked, exposure-capped config.
 
     This is the scale at which the two stop being alternatives. It is what a
     field simulation needs, and what a candidate pool for selection needs.
+
+    Marked `slow` and excluded from CI. `--benchmark-disable` does not make this
+    cheap -- it still executes the body once, and once is ten thousand sequential
+    CP-SAT solves. The published figure comes from a manual `task bench` on known
+    hardware, which is where every real number here comes from anyway.
     """
     pool = contest_slate
     rung = rung_by_name(pool, CONTEST_RUNG)

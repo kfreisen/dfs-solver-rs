@@ -84,7 +84,10 @@ testpaths = ["tests"]
 python_files = ["test_*.py", "bench_*.py"]
 addopts = "-q --strict-markers --strict-config"
 filterwarnings = ["error"]
-markers = ["slow: excluded from the default run"]
+# Deselected in CI and by `task bench-quick` with -m "not slow"; `task bench`
+# runs it. Note --benchmark-disable does not make a case cheap: it leaves the
+# body executing once, so anything genuinely long has to carry this marker.
+markers = ["slow: only run by a manual `task bench`"]
 
 [tool.coverage.run]
 source = ["mlb_dfs_solver"]

@@ -38,6 +38,12 @@ So CI does two things instead:
 
 Neither asserts a duration.
 
+One case is deselected there entirely. Disabling timing does not make a benchmark
+cheap — it leaves the body executing once — and once for the contest-scale draw
+is ten thousand sequential CP-SAT solves. It carries a `slow` marker, CI runs
+`-m "not slow"`, and its number comes from a manual `task bench`, which is where
+every published number here comes from anyway.
+
 ## Numbers come from named hardware
 
 Real measurements are taken on a known machine:
