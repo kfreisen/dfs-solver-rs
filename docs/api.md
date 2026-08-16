@@ -11,3 +11,5 @@
 ::: mlb_dfs_solver.select
 
 ::: mlb_dfs_solver.presets
+
+::: mlb_dfs_solver.recipes

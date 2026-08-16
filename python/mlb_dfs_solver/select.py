@@ -60,6 +60,7 @@ line and a 0.06-point error flips the ones sitting on it.
 
 from __future__ import annotations
 
+import enum
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -71,12 +72,33 @@ if TYPE_CHECKING:
     from mlb_dfs_solver.spec import RosterSpec
 
 __all__ = [
+    "Mode",
     "field_line",
     "portfolio_value",
     "score_lineups",
     "select_portfolio",
     "tail_line",
 ]
+
+
+class Mode(enum.Enum):
+    """The objective a portfolio is selected under.
+
+    The same three choices `select_portfolio` accepts as strings, for callers who
+    want the objective to be a checkable symbol rather than a literal. There is
+    still no default anywhere — the wrong objective is confidently wrong.
+    """
+
+    CASH = "cash"
+    """Each entry judged alone on its chance of clearing the line."""
+
+    GPP = "gpp"
+    """The chance that *some* entry clears the line."""
+
+    EXCESS = "excess"
+    """How far past the line the best entry got — suits a payout that keeps
+    climbing with rank."""
+
 
 _MODES = {
     # A cash game: each entry judged alone on its chance of clearing the line.
@@ -203,7 +225,7 @@ def tail_line(sim_scores: np.ndarray, quantile: float = 0.99) -> float:
 def select_portfolio(
     sim_scores: np.ndarray,
     *,
-    mode: str,
+    mode: str | Mode,
     line: float | np.ndarray,
     n_select: int = 150,
     lineups: np.ndarray | None = None,
@@ -215,9 +237,10 @@ def select_portfolio(
 
     Args:
         sim_scores: An `(n_candidates, n_outcomes)` array from `score_lineups`.
-        mode: `"cash"`, `"gpp"`, or `"excess"`. See the module docstring — these
-            are different objectives, not settings on one, and there is no
-            default because the wrong one is confidently wrong.
+        mode: `"cash"`, `"gpp"`, or `"excess"` — or the matching
+            [`Mode`][mlb_dfs_solver.select.Mode] member. See the module docstring
+            — these are different objectives, not settings on one, and there is
+            no default because the wrong one is confidently wrong.
         line: The score that has to be beaten. Either one value per outcome —
             which is what you almost always want, see
             [`field_line`][mlb_dfs_solver.select.field_line] — or a single number
@@ -250,6 +273,8 @@ def select_portfolio(
     Raises:
         ValueError: If the mode is unknown, or the arrays are inconsistent.
     """
+    if isinstance(mode, Mode):
+        mode = mode.value
     if mode not in _MODES:
         known = ", ".join(sorted(_MODES))
         msg = f"unknown mode {mode!r}; expected one of: {known}"
