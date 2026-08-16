@@ -93,6 +93,9 @@ class Scenario:
         max_exposure: Per-player ceiling, applied by both implementations.
         solver: Whether to run the MILP baseline. Off where it cannot finish in
             a sane wall clock, or where the thing measured has no solver analog.
+        reference: Whether to run the pure-Python oracle. Off where the scenario
+            uses a knob the oracle does not implement — it has no chunks, so the
+            per-chunk `diversity_weight` fade has no serial transcription.
         solver_budget_s: Wall-clock budget for the solver's whole portfolio, or
             None for no budget. The contest-scale row sets one because 10,000
             no-good-cut solves have no natural upper bound; the report then says
@@ -112,6 +115,7 @@ class Scenario:
     locks: tuple[int, ...] = ()
     max_exposure: dict[int, float] | None = None
     solver: bool = True
+    reference: bool = True
     solver_budget_s: float | None = None
     build_extra: dict[str, Any] = field(default_factory=dict)
 
@@ -288,7 +292,10 @@ def build_scenarios() -> list[Scenario]:
             max_exposure=caps,
             # No CP-SAT analog: this is a preference, not a constraint. The
             # comparator is the `mme` row, which is this row with the weight off.
+            # The Python oracle has no chunks, so the per-chunk fade has no
+            # serial transcription either — this row is kernel-only.
             solver=False,
+            reference=False,
             build_extra={"diversity_weight": 0.6},
         ),
         Scenario(

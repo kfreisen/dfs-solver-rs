@@ -188,7 +188,7 @@ def measure_scenario(scenario: Scenario, *, with_solver: bool, with_reference: b
     record("mlb_dfs_solver_rust", seconds, lineups)
     print(f" {seconds * 1e3:9.2f} ms  ({len(lineups)}/{scenario.entries})")
 
-    if with_reference and scenario.entries <= REFERENCE_MAX_ENTRIES:
+    if with_reference and scenario.reference and scenario.entries <= REFERENCE_MAX_ENTRIES:
         print(f"  {scenario.name:14s} python ...", end="", flush=True)
         seconds, lineups = measure(build_lineups_reference, pool, spec, **scenario.build_kwargs)
         record("reference_python", seconds, lineups)
