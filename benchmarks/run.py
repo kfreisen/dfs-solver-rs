@@ -41,13 +41,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from baselines.milp import solve_milp_ortools, solve_portfolio_ortools
 from baselines.reference import build_lineups_reference
-from mlb_dfs_solver import __version__, build_lineups
-from scenarios import SCENARIO_NAMES, Scenario, build_scenarios
+from baselines.selection import select_portfolio_reference
+from mlb_dfs_solver import __version__, build_lineups, score_lineups, select_portfolio
+from scenarios import SCENARIO_NAMES, Scenario, build_scenarios, scenario_by_name
+from simulate import simulate
 from slates import describe_lineups
+from workflow import run_workflow
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 RESULTS = REPO_ROOT / "benchmarks" / "results"
-SCHEMA = 1
+# Schema 2 adds the top-level `workflow` record and the `selection` cases; every
+# schema-1 field keeps its meaning, and the renderers read both.
+SCHEMA = 2
 
 # Per solve. Generous enough that nothing here hits it; present so one pathological
 # instance cannot stall a run for hours.
@@ -201,7 +206,65 @@ def measure_scenario(scenario: Scenario, *, with_solver: bool, with_reference: b
         lineups = np.array(found)
         if len(lineups):
             record("milp_ortools_cpsat", seconds, lineups)
+            if scenario.solver_budget_s:
+                # Recorded so the report can say "N lineups is what the budget
+                # bought" instead of presenting a truncated run as a completed one.
+                cases[-1]["params"]["budget_s"] = scenario.solver_budget_s
         print(f" {seconds:9.2f} s   ({len(lineups)}/{scenario.entries})")
+
+    return cases
+
+
+def measure_selection(*, with_reference: bool, smoke: bool = False) -> list[dict[str, Any]]:
+    """Time the selection stage: the lazy-greedy kernel against the naive greedy.
+
+    The setup — build, simulate, score — is shared workload, not the thing
+    measured; the workflow record times the pipeline end to end. The line is a
+    quantile of the candidates' own scores, which the docs rightly call circular
+    as a *quality* measure — here it only shapes the workload, and no quality
+    claim is made from it.
+    """
+    n_candidates, n_outcomes, n_select = (200, 100, 20) if smoke else (5_000, 2_000, 150)
+    scenario = scenario_by_name("rules-only")
+    pool, spec = scenario.pool, scenario.spec
+    candidates = build_lineups(pool, spec, num_lineups=n_candidates, seed=11, attempts_per_lineup=5)
+    universe = simulate(pool, n_outcomes)
+    scores = score_lineups(pool, spec, candidates, universe)
+    line = np.quantile(scores, 0.99, axis=0).astype(np.float32)
+    detail = f"select {n_select} of {len(candidates):,} candidates, {n_outcomes:,} outcomes, gpp"
+
+    cases: list[dict[str, Any]] = []
+
+    def record(impl: str, seconds: float, chosen: Any) -> None:
+        chosen = np.asarray(chosen, dtype=np.int64)
+        cases.append(
+            {
+                "name": "selection",
+                "impl": impl,
+                "detail": detail,
+                "median": seconds,
+                "params": {
+                    "requested": n_select,
+                    "produced": int(len(chosen)),
+                    "pool": int(len(pool)),
+                    "roster_size": spec.roster_size,
+                },
+                "quality": describe_lineups(pool, spec, candidates[chosen]),
+            }
+        )
+
+    print(f"  {'selection':14s} kernel ...", end="", flush=True)
+    seconds, chosen = measure(select_portfolio, scores, mode="gpp", line=line, n_select=n_select)
+    record("mlb_dfs_solver_rust", seconds, chosen)
+    print(f" {seconds * 1e3:9.2f} ms  ({len(chosen)}/{n_select})")
+
+    if with_reference:
+        print(f"  {'selection':14s} python ...", end="", flush=True)
+        seconds, chosen = measure(
+            select_portfolio_reference, scores, mode="gpp", line=line, n_select=n_select
+        )
+        record("selection_reference_python", seconds, chosen)
+        print(f" {seconds * 1e3:9.2f} ms  ({len(chosen)}/{n_select})")
 
     return cases
 
@@ -228,8 +291,6 @@ def main() -> int:
     if args.smoke:
         # Deliberately tiny and deliberately not written anywhere. This exists so
         # CI can prove the code still runs without CI ever producing a number.
-        from scenarios import scenario_by_name
-
         scenario = scenario_by_name("stack")
         small = Scenario(
             name="smoke",
@@ -241,6 +302,8 @@ def main() -> int:
         )
         print("smoke:")
         measure_scenario(small, with_solver=not args.no_solver, with_reference=True)
+        measure_selection(with_reference=True, smoke=True)
+        run_workflow(smoke=True)
         print("ok")
         return 0
 
@@ -256,6 +319,14 @@ def main() -> int:
             with_solver=not args.no_solver,
             with_reference=not args.no_reference,
         )
+
+    # The selection stage and the whole-pipeline record belong to a full run;
+    # a filtered run is somebody re-measuring one scenario.
+    workflow_record = None
+    if args.scenario is None:
+        cases += measure_selection(with_reference=not args.no_reference)
+        print("workflow:")
+        workflow_record = run_workflow()
     print(f"\ntotal {time.perf_counter() - started:.1f}s")
 
     hw = hardware()
@@ -267,6 +338,7 @@ def main() -> int:
         "timestamp": datetime.now(UTC).isoformat(),
         "hardware": hw,
         "cases": cases,
+        **({"workflow": workflow_record} if workflow_record else {}),
     }
 
     out = args.out or (RESULTS / hw["id"] / f"{report['timestamp'][:10]}-{report['git_sha']}.json")

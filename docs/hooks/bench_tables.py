@@ -101,8 +101,8 @@ def render_timing_case(case_name: str, measurements: list[dict[str, Any]]) -> li
         if requested
         else "",
         "",
-        "| Implementation | Time | Relative | Returned | Players used | Projection min → max |",
-        "| --- | ---: | ---: | ---: | ---: | ---: |",
+        "| Implementation | Time | Relative | Returned | Players used | Overlap | Projection min → max |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
 
     for m in ranked:
@@ -121,6 +121,7 @@ def render_timing_case(case_name: str, measurements: list[dict[str, Any]]) -> li
             else "—"
         )
         used = f"{q['distinct_players']} of {q['pool_size']}" if "distinct_players" in q else "—"
+        overlap = f"{q['mean_overlap']:.0%}" if "mean_overlap" in q else "—"
         spread = (
             f"{q['worst_ratio']:.0%} → {q['best_ratio']:.0%}"
             if "worst_ratio" in q and "best_ratio" in q
@@ -128,7 +129,7 @@ def render_timing_case(case_name: str, measurements: list[dict[str, Any]]) -> li
         )
         lines.append(
             f"| `{m['impl']}` | {duration(m['median'])} | {relative} | "
-            f"{returned} | {used} | {spread} |"
+            f"{returned} | {used} | {overlap} | {spread} |"
         )
     lines.append("")
 
@@ -183,6 +184,47 @@ def render_result(result: dict[str, Any]) -> list[str]:
         lines += render_timing_case(case_name, measurements)
         lines += render_detail_case(case_name, measurements)
 
+    lines += render_workflow(result)
+    return lines
+
+
+def render_workflow(result: dict[str, Any]) -> list[str]:
+    """The whole-pipeline record: stage timings, then each portfolio described.
+
+    Everything shown is a timing or a description of the lineups. No stage is
+    scored against the contest — the field and the simulator are both harness
+    fixtures, and a fixture cannot grade the thing it was written for.
+    """
+    workflow = result.get("workflow")
+    if not workflow:
+        return []
+    sizes = workflow["sizes"]
+    lines = [
+        "### The whole job, timed",
+        "",
+        f"Build {sizes['candidates']:,} candidates, build a {sizes['field']:,}-entry "
+        f"field under contest rules, simulate {sizes['outcomes']:,} outcomes, score "
+        "everything, draw the lines, select a tournament portfolio and a cash "
+        "portfolio.",
+        "",
+        "| Stage | Time |",
+        "| --- | ---: |",
+        *[f"| {s['name']} | {duration(s['seconds'])} |" for s in workflow["stages"]],
+        f"| **total** | **{duration(workflow['total_seconds'])}** |",
+        "",
+    ]
+    for label in ("gpp", "cash"):
+        described = workflow.get(label)
+        if not described:
+            continue
+        lines += [
+            f'??? note "workflow — the `{label}` portfolio, every measure"',
+            "",
+            "    | Measure | Value |",
+            "    | --- | ---: |",
+            *[f"    | `{k}` | {v} |" for k, v in described.items()],
+            "",
+        ]
     return lines
 
 

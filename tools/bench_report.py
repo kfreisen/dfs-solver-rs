@@ -104,13 +104,15 @@ def readme_summary(report: dict[str, Any]) -> str:
             "entries cluster at the optimum and are built from a fraction of the "
             "slate. Which output you want depends on the contest.",
             "",
-            "| | Players used | In >50% of entries | Projection, min → max | Entries |",
-            "| --- | ---: | ---: | ---: | ---: |",
+            "| | Players used | Mean overlap | In >50% of entries | Projection, min → max | Entries |",
+            "| --- | ---: | ---: | ---: | ---: | ---: |",
         ]
         for label, case in (("This package", ours), ("Solver + no-good cuts", solver)):
             q = case["quality"]
+            overlap = f"{q['mean_overlap']:.0%}" if "mean_overlap" in q else "—"
             lines.append(
                 f"| {label} | **{q['distinct_players']} of {q['pool_size']}** | "
+                f"{overlap} | "
                 f"{q['players_over_50pct']} | "
                 f"{q.get('worst_ratio', 0):.0%} → {q.get('best_ratio', 0):.0%} of optimum | "
                 f"{q['lineups']:,} |"
@@ -132,13 +134,46 @@ def readme_summary(report: dict[str, Any]) -> str:
             if case is None:
                 continue
             produced = case["params"]["produced"]
+            budget = case["params"].get("budget_s")
+            if budget and produced < case["params"]["requested"]:
+                # A truncated run presented as a completed one would understate
+                # the solver; say what the budget bought instead.
+                label = f"{label} ({duration(budget)} budget)"
             lines.append(
                 f"| {label} | {produced:,} | {duration(case['median'])} | "
                 f"{duration(case['median'] / max(produced, 1))} |"
             )
 
+    lines += _workflow_section(report)
     lines += ["", README_END]
     return "\n".join(lines)
+
+
+def _workflow_section(report: dict[str, Any]) -> list[str]:
+    """The whole job, timed — one row per pipeline stage.
+
+    Descriptive only: stage timings and sizes. The portfolio-quality measures in
+    the `workflow` record stay on the docs site, where the caveats around them
+    have room to be stated.
+    """
+    workflow = report.get("workflow")
+    if not workflow:
+        return []
+    sizes = workflow["sizes"]
+    lines = [
+        "",
+        "**The whole job, timed.** What a tournament player actually runs: build "
+        f"{sizes['candidates']:,} candidates under a stacked, conflict-ruled spec, "
+        f"build a {sizes['field']:,}-entry field under contest rules, simulate "
+        f"{sizes['outcomes']:,} outcomes, score everything, draw the lines, and "
+        "select a 150-entry tournament portfolio and a 20-entry cash portfolio.",
+        "",
+        "| Stage | Time |",
+        "| --- | ---: |",
+        *[f"| {s['name']} | {duration(s['seconds'])} |" for s in workflow["stages"]],
+        f"| **total** | **{duration(workflow['total_seconds'])}** |",
+    ]
+    return lines
 
 
 def _scenario_rows(grouped: dict[str, dict[str, dict[str, Any]]]) -> list[str]:
