@@ -64,7 +64,7 @@ time and describe what was generated. Which output suits your contest is your ca
 
 ## Benchmarks
 
-Measured against MILP formulations of the same problem (PuLP/CBC and OR-Tools), which live in
+Measured against a MILP formulation of the same problem (OR-Tools CP-SAT), which lives in
 [`benchmarks/baselines/`](https://github.com/kfreisen/mlb-dfs-solver/tree/main/benchmarks/baselines)
 as real, tested, importable code — along with a pure-Python transcription of the greedy algorithm
 that serves as the parity oracle. The solver side models every rule the specification can

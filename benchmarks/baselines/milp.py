@@ -3,13 +3,13 @@
 This is what mlb_dfs_solver is measured against, and it is important to be precise about
 what the comparison shows — because the naive reading of it is wrong.
 
-**A solver wins on one lineup.** Asked for the single best lineup, CBC returns the
-optimum and the greedy builder returns something slightly worse. That is not in
-dispute and this file exists partly to demonstrate it.
+**A solver wins on one lineup.** Asked for the single best lineup, CP-SAT returns
+the optimum and the greedy builder returns something slightly worse. That is not
+in dispute and this file exists partly to demonstrate it.
 
 **Asked for many, it returns the top N by projection.** Each is the best remaining
 roster after forbidding the last, so they differ by a player or two and are built
-from a narrow slice of the slate. `bench_generated.py` describes that difference
+from a narrow slice of the slate. `benchmarks/run.py` describes that difference
 without judging it: whether a tight, high-projection set beats a wide one depends
 on the contest and on the projections, and nothing in this repository can settle
 that.
@@ -23,21 +23,23 @@ get N lineups from a solver, not the best one. The contest-scale table does not
 depend on the distinction: at 10,000 lineups both are out of reach.
 
 Speed is the smaller part of the story and was long overstated here. On a
-realistic slate CBC produces a 150-entry portfolio in about eighteen seconds —
-not the "15-20 seconds per lineup" this file used to claim, which was measured on
-a degenerate slate where eleven clones of every player sent branch-and-bound
+realistic slate a solver produces a 150-entry portfolio in seconds — not the
+"15-20 seconds per lineup" this file used to claim, which was measured on a
+degenerate slate where eleven clones of every player sent branch-and-bound
 hunting through interchangeable optima. What a solver genuinely cannot do is
-produce a *candidate pool*: twenty thousand lineups by no-good cut is about forty
-minutes, and they would be the twenty thousand most similar lineups available.
+produce a *candidate pool*: twenty thousand lineups by no-good cut is the better
+part of an hour, and they would be the twenty thousand most similar lineups
+available.
 
-PuLP with the bundled CBC is the baseline because it is open source and installs
-everywhere. OR-Tools' CP-SAT is included as a second opinion — it is markedly
-faster than CBC on this problem shape and makes the comparison harder for mlb_dfs_solver,
-which is the point of including it. Gurobi would be faster still and is deliberately
-absent: it needs a commercial license, so a benchmark nobody can reproduce.
+OR-Tools' CP-SAT is the baseline: open source, installs everywhere, and markedly
+faster on this problem shape than the bundled-CBC route PuLP offers — this file
+carried a CBC formulation until it was benchmarked nowhere, and beating the
+slower of two free solvers was the weaker claim anyway. Gurobi would be faster
+still and is deliberately absent: it needs a commercial license, so a benchmark
+nobody can reproduce.
 
 **Every constraint the specification can express is modelled here.** That is what
-makes the constraint ladder in `bench_constraints.py` a comparison rather than a
+makes the scenario ladder in `benchmarks/scenarios.py` a comparison rather than a
 handicap: if the solver only enforced the salary cap while the kernel enforced
 stacks and conflicts too, the kernel would look slow for doing more work. The one
 thing that is genuinely awkward to state as a linear program is an exposure cap,
@@ -59,9 +61,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "solve_milp_ortools",
-    "solve_milp_pulp",
     "solve_portfolio_ortools",
-    "solve_portfolio_pulp",
 ]
 
 
@@ -103,7 +103,7 @@ def _extract(
     return lineup
 
 
-def solve_milp_pulp(
+def solve_milp_ortools(
     pool: PlayerPool,
     spec: RosterSpec,
     *,
@@ -133,132 +133,10 @@ def solve_milp_pulp(
         locks: Players that must appear.
         conflict_pairs: Pool-index pairs that may not appear together, on top of
             whatever `spec.conflicts` resolves to.
-        time_limit_s: Wall-clock limit handed to CBC.
+        time_limit_s: Wall-clock limit handed to CP-SAT.
 
     Returns:
         Pool indices in slot order, or None if no valid lineup exists.
-    """
-    import pulp
-
-    n = len(pool)
-    groups = list(range(len(spec.slots)))
-    eligible = _eligible(pool, spec)
-
-    problem = pulp.LpProblem("lineup", pulp.LpMaximize)
-    assign = {
-        (i, gi): pulp.LpVariable(f"x_{i}_{gi}", cat="Binary") for gi in groups for i in eligible[gi]
-    }
-
-    # Score and salary are both per-placement, so a captain slot is expressed by
-    # its coefficients rather than by a special case.
-    problem += pulp.lpSum(
-        float(pool.projections[i]) * spec.slots[gi].score_multiplier * var
-        for (i, gi), var in assign.items()
-    )
-    salary = pulp.lpSum(
-        scaled_salary(int(pool.salaries[i]), spec.slots[gi].salary_multiplier) * var
-        for (i, gi), var in assign.items()
-    )
-
-    for gi in groups:
-        problem += pulp.lpSum(assign[i, gi] for i in eligible[gi]) == spec.slots[gi].count
-    for i in range(n):
-        placements = [assign[i, gi] for gi in groups if (i, gi) in assign]
-        if placements:
-            problem += pulp.lpSum(placements) <= 1
-
-    problem += salary <= spec.salary_cap
-    if spec.salary_floor > 0:
-        problem += salary >= spec.salary_floor
-
-    for group in spec.groups:
-        counted = [gi for gi in groups if spec.slot_mask_for(group.slots) & (1 << gi)]
-        keys = pool.keys[group.key]
-        members_by_key = {
-            key: [assign[i, gi] for gi in counted for i in eligible[gi] if int(keys[i]) == key]
-            for key in _key_values(pool, group.key)
-        }
-        for members in members_by_key.values():
-            if members and group.cap != UNCAPPED:
-                problem += pulp.lpSum(members) <= group.cap
-
-        # "At least N distinct key values." An indicator per value, allowed to be
-        # 1 only when the value is actually used, then a floor on their sum.
-        if group.min_distinct:
-            used = {}
-            for key, members in members_by_key.items():
-                if not members:
-                    continue
-                used[key] = pulp.LpVariable(f"used_{group.key}_{key}_{id(group)}", cat="Binary")
-                problem += used[key] <= pulp.lpSum(members)
-            problem += pulp.lpSum(used.values()) >= group.min_distinct
-
-        # "Some one key value supplies N players." An indicator per value that can
-        # only be 1 when that value reaches the stack size, then at least one of
-        # them must be. This is the existential the greedy builder has to resolve
-        # by drawing a target; a solver simply searches over it, which is the
-        # clearest illustration of what the two approaches trade.
-        if group.min_stack:
-            reaches = {}
-            for key, members in members_by_key.items():
-                if len(members) < group.min_stack:
-                    continue
-                reaches[key] = pulp.LpVariable(f"stack_{group.key}_{key}_{id(group)}", cat="Binary")
-                problem += pulp.lpSum(members) >= group.min_stack * reaches[key]
-            if not reaches:
-                return None
-            problem += pulp.lpSum(reaches.values()) >= 1
-
-    pairs = list(zip(*pool.conflict_pairs(spec).tolist(), strict=True))
-    pairs += list(conflict_pairs or [])
-    for a, b in pairs:
-        left = [assign[a, gi] for gi in groups if (a, gi) in assign]
-        right = [assign[b, gi] for gi in groups if (b, gi) in assign]
-        if left and right:
-            problem += pulp.lpSum(left) + pulp.lpSum(right) <= 1
-
-    for player in locks or []:
-        placements = [assign[player, gi] for gi in groups if (player, gi) in assign]
-        if not placements:
-            return None
-        problem += pulp.lpSum(placements) == 1
-
-    for player in banned or []:
-        for gi in groups:
-            if (player, gi) in assign:
-                problem += assign[player, gi] == 0
-
-    for forbidden in excluded or []:
-        members = [assign[i, gi] for gi in groups for i in eligible[gi] if i in forbidden]
-        if members:
-            problem += pulp.lpSum(members) <= len(forbidden) - 1
-
-    problem.solve(pulp.PULP_CBC_CMD(msg=False, timeLimit=time_limit_s))
-    if pulp.LpStatus[problem.status] != "Optimal":
-        return None
-
-    return _extract(
-        spec,
-        eligible,
-        lambda i, gi: bool(assign[i, gi].value()) and assign[i, gi].value() > 0.5,
-    )
-
-
-def solve_milp_ortools(
-    pool: PlayerPool,
-    spec: RosterSpec,
-    *,
-    excluded: Sequence[frozenset[int]] | None = None,
-    banned: Sequence[int] | None = None,
-    locks: Sequence[int] | None = None,
-    conflict_pairs: Sequence[tuple[int, int]] | None = None,
-    time_limit_s: float = 30.0,
-) -> list[int] | None:
-    """The same formulation on CP-SAT.
-
-    Included because CBC is not a strong solver and beating it is a weak claim.
-    CP-SAT is much faster on this problem shape, so it is the harder comparison and
-    the more honest one — and fast enough that a constraint ladder finishes.
     """
     from ortools.sat.python import cp_model
 
@@ -413,43 +291,6 @@ def _portfolio(
     return found
 
 
-def solve_portfolio_pulp(
-    pool: PlayerPool,
-    spec: RosterSpec,
-    *,
-    num_lineups: int,
-    locks: Sequence[int] | None = None,
-    conflict_pairs: Sequence[tuple[int, int]] | None = None,
-    max_exposure: float | Mapping[int, float] | None = None,
-    time_limit_s: float = 30.0,
-) -> list[list[int]]:
-    """Produce `num_lineups` distinct lineups with CBC and no-good cuts.
-
-    This is the apples-to-apples comparison against `mlb_dfs_solver.build_lineups`.
-
-    Measured at roughly 119 ms per lineup on the shared 288-player slate, and it
-    does not grow superlinearly despite each solve carrying one more no-good cut
-    than the last — the cuts are cheap next to the solve itself.
-
-    That per-lineup cost is extremely sensitive to the slate rather than to its
-    size. On a slate with many tied `(salary, projection)` pairs the same solver
-    took 80 seconds per lineup, 676 times slower, because proving optimality
-    means ruling out every interchangeable alternative. A benchmark that reports
-    solver time without saying whether its inputs are degenerate is reporting
-    the degeneracy.
-    """
-    return _portfolio(
-        solve_milp_pulp,
-        pool,
-        spec,
-        num_lineups=num_lineups,
-        locks=locks,
-        conflict_pairs=conflict_pairs,
-        max_exposure=max_exposure,
-        time_limit_s=time_limit_s,
-    )
-
-
 def solve_portfolio_ortools(
     pool: PlayerPool,
     spec: RosterSpec,
@@ -460,7 +301,16 @@ def solve_portfolio_ortools(
     max_exposure: float | Mapping[int, float] | None = None,
     time_limit_s: float = 30.0,
 ) -> list[list[int]]:
-    """The same portfolio on CP-SAT, which is fast enough to run a ladder against."""
+    """Produce `num_lineups` distinct lineups with CP-SAT and no-good cuts.
+
+    This is the apples-to-apples comparison against `mlb_dfs_solver.build_lineups`.
+
+    Per-lineup cost is extremely sensitive to the slate rather than to its size.
+    On a slate with many tied `(salary, projection)` pairs a solver can run
+    hundreds of times slower, because proving optimality means ruling out every
+    interchangeable alternative. A benchmark that reports solver time without
+    saying whether its inputs are degenerate is reporting the degeneracy.
+    """
     return _portfolio(
         solve_milp_ortools,
         pool,

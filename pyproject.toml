@@ -68,10 +68,9 @@ dev = [
     "marimo>=0.10",
     "maturin>=1.7,<2.0",
 ]
-# The MILP baselines. These are the "before" this package is measured against and
-# must never reach a user's install — PuLP alone would drag in a CBC binary.
+# The MILP baseline. This is the "before" this package is measured against and
+# must never reach a user's install.
 bench = [
-    "pulp>=3.0,<4",
     "ortools>=9.10",
     # Only for the RAM figure recorded alongside each result. Optional at
     # runtime — benchmarks/run.py records `null` without it rather than failing.
