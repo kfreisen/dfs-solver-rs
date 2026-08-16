@@ -274,6 +274,7 @@ reachable:
 | Prefer popular players | a negative `leverage` exponent — it inverts the fade |
 | Concentrate on one team | `GroupConstraint(min_stack=...)` |
 | Avoid a pitcher's opposing hitters | [`ConflictRule`][mlb_dfs_solver.spec.ConflictRule] |
+| Spread the portfolio off its favourites | `build_lineups(diversity_weight=...)` — see [spreading a portfolio](#spreading-a-portfolio) |
 | Cap how often a player is used | `select_portfolio(max_exposure=...)` — see [exposure caps](#exposure-caps) |
 | Always use a player | `locks` |
 | Weight a player up or down | adjust their projection before building |
@@ -298,6 +299,40 @@ only the ordering; a lineup is still worth the sum of its players' projections.
 Pricing narrows the pool even at the default — a sharper objective makes attempts
 agree more often. On the benchmark slate the pool fell from 20,000 distinct
 lineups to 15,000 while every quality measure improved.
+
+### Spreading a portfolio
+
+`build_lineups(diversity_weight=...)` fades a player already used by the lineups
+built so far. Their value drops by `weight × share × mean_projection`, where
+`share` is the fraction of accepted lineups containing them.
+
+Measured on a 288-player slate, 10,000 lineups:
+
+| `diversity_weight` | distinct players | mean overlap | median entry |
+| ---: | ---: | ---: | ---: |
+| off | 92 | 35.0% | 132.6 |
+| `0.6` | 119 | 17.6% | 129.9 |
+| `1.0` | 133 | 13.8% | 128.6 |
+
+It is a **preference, not a constraint**, and that is the whole reason it sits
+beside `max_exposure` instead of replacing it. A cap rejects a finished lineup at
+the merge and costs yield; this steers construction before the lineup exists, so
+the portfolio spreads without anything being discarded. Use the cap for a hard
+ceiling on named players, and this to spread everything else — which is the
+answer to not wanting to write down a ceiling for all 288.
+
+It needs a history to fade against. Each chunk reads its own, so the mechanism
+does nothing unless `num_lineups × attempts_per_lineup / chunks` is at least
+about three. A 20-lineup portfolio at the default `chunks=64` gets one attempt
+per chunk and no effect; lower `chunks` for those.
+
+Two alternatives were built and measured before settling here. A **global
+snapshot**, refreshed in sequential waves, spread exposure just as well but left
+mean overlap unchanged at 35% — every chunk reads the same snapshot, so they all
+avoid the same players and all converge on the same replacements. A **maximum
+overlap constraint**, the Hamming rule a solver would use, reduced overlap only
+once the threshold fell near the mean, and needed 2.5× the candidate pool to fill
+the same portfolio.
 
 ### Exposure caps
 

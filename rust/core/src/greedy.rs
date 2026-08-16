@@ -187,6 +187,27 @@ pub struct GreedyConfig {
     /// legal. It depends only on eligibility and slot counts, so it is settled
     /// once, before construction, where it can be done properly and explained.
     pub locks: Vec<(u32, usize)>,
+    /// How strongly to fade a player already used by the lineups accepted so far.
+    ///
+    /// A player's value drops by `diversity_weight * share * mean_projection`,
+    /// where `share` is the fraction of accepted lineups already containing them.
+    /// Zero disables it and reproduces the original output exactly.
+    ///
+    /// This is a *preference*, not a constraint, which is the whole reason it
+    /// exists next to `exposure_limits`. A cap rejects a finished lineup at the
+    /// merge and costs yield; this steers construction before the lineup exists,
+    /// so the portfolio spreads out without any lineup being thrown away.
+    ///
+    /// Subtractive rather than multiplicative because `value` is a *priced*
+    /// projection and can be negative — scaling a negative number down would
+    /// make an over-used, over-priced player look better.
+    ///
+    /// Each chunk fades against its own accepted lineups. That needs enough
+    /// attempts per chunk to have a history worth reading:
+    /// `num_lineups * attempts_per_lineup / chunks`, which wants to be at least
+    /// about three. Below that the mechanism is a no-op and the fix is fewer
+    /// `chunks`, not a larger weight.
+    pub diversity_weight: f64,
     /// Per-player ceiling on how many returned lineups may contain that player.
     /// Empty means uncapped; `u32::MAX` means uncapped for one player.
     ///
@@ -206,6 +227,7 @@ impl Default for GreedyConfig {
             chunks: 64,
             profiles: vec![JitterProfile::CONTRARIAN, JitterProfile::STANDARD],
             value_weight: 0.75,
+            diversity_weight: 0.0,
             locks: Vec::new(),
             exposure_limits: Vec::new(),
         }
@@ -580,6 +602,15 @@ pub fn build_lineups(
         .num_lineups
         .saturating_mul(config.attempts_per_lineup);
     let per_chunk = (total_attempts / config.chunks).max(1);
+    // Scaling by the pool's mean projection is what makes the weight unitless:
+    // 1.0 docks a player used in every lineup by one average player's worth of
+    // value, on a slate scoring eight points a man or eighty.
+    let fading = config.diversity_weight > 0.0;
+    let fade_scale = if fading && !pool.is_empty() {
+        config.diversity_weight * pool.projections.iter().sum::<f64>() / pool.len() as f64
+    } else {
+        0.0
+    };
 
     let chunk_results: Vec<Vec<Lineup>> = (0..config.chunks)
         .into_par_iter()
@@ -590,15 +621,37 @@ pub fn build_lineups(
             );
             let mut seen: HashSet<Lineup> = HashSet::new();
             let mut out: Vec<Lineup> = Vec::new();
+            // Usage over this chunk's own lineups. Deliberately not shared: a
+            // counter visible to every chunk would have to be mutated as they
+            // ran, and the answer would then depend on how rayon interleaved
+            // them, which is the one thing this file guarantees it does not do.
+            //
+            // Keeping it local costs nothing in effect. Chunks start from
+            // different seeds and so explore different regions anyway; fading
+            // each against its own history is what makes consecutive lineups
+            // within a chunk differ, and pairwise overlap is what that moves. A
+            // shared snapshot, tried and measured, steers every chunk the same
+            // way — it spreads exposure but leaves lineups as alike as before.
+            let mut counts = vec![0u32; if fading { pool.len() } else { 0 }];
 
             for attempt in 0..per_chunk {
                 let profile = config.profiles[attempt % config.profiles.len()];
+                let fade = fading.then(|| Fade {
+                    counts: &counts,
+                    accepted: out.len(),
+                    scale: fade_scale,
+                });
                 builder.choose_stack_targets(&mut rng);
-                builder.randomize_objective(&mut rng, profile, config.noise);
+                builder.randomize_objective(&mut rng, profile, config.noise, fade.as_ref());
                 if let Some(lineup) = builder.fill() {
                     let mut key = lineup.clone();
                     key.sort_unstable();
                     if seen.insert(key) {
+                        if fading {
+                            for &player in &lineup {
+                                counts[player as usize] += 1;
+                            }
+                        }
                         out.push(lineup);
                     }
                 }
@@ -618,6 +671,11 @@ pub fn build_lineups(
     // separately, which is a different and weaker constraint. The merge is
     // already sequential and already in a fixed order, so it is the one place
     // that can see the whole portfolio and still reproduce exactly.
+    //
+    // `diversity_weight` is the other half of that trade and lives in the chunks
+    // precisely because it is a preference rather than a ceiling: an approximate
+    // answer computed from partial information is fine, and it steers a lineup
+    // before it exists instead of discarding one that already does.
     let capping = !config.exposure_limits.is_empty();
     let mut exposure = vec![0u32; if capping { pool.len() } else { 0 }];
     let mut seen: HashSet<Lineup> = HashSet::new();
@@ -647,6 +705,29 @@ pub fn build_lineups(
         }
     }
     Ok(all)
+}
+
+/// How much to dock a player for already being used.
+///
+/// Holds a borrowed count column and the divisor, rather than a precomputed
+/// per-player vector, because the counts change as lineups are accepted and a
+/// vector would have to be rebuilt each time. `penalty` is one multiply.
+struct Fade<'a> {
+    counts: &'a [u32],
+    accepted: usize,
+    /// `diversity_weight * mean_projection`, folded together once. Scaling by
+    /// the pool's mean projection is what makes the weight unitless: 1.0 docks
+    /// a player used in every lineup by one average player's worth of value.
+    scale: f64,
+}
+
+impl Fade<'_> {
+    fn penalty(&self, player: usize) -> f64 {
+        if self.accepted == 0 {
+            return 0.0;
+        }
+        self.scale * (self.counts[player] as f64 / self.accepted as f64)
+    }
 }
 
 /// Everything derived from the pool and the spec once, before the parallel
@@ -783,6 +864,7 @@ impl<'a> Builder<'a> {
         rng: &mut Xoshiro256PlusPlus,
         profile: JitterProfile,
         noise: f64,
+        fade: Option<&Fade<'_>>,
     ) {
         let ceiling = sample_range(rng, profile.ceiling);
         let leverage = sample_range(rng, profile.leverage);
@@ -791,7 +873,7 @@ impl<'a> Builder<'a> {
             // The salary-priced projection, not the raw one — including for the
             // noise amplitude, so a player the pricing has written off does not
             // also get the largest random kick.
-            let projection = self.value[i];
+            let projection = self.value[i] - fade.map_or(0.0, |f| f.penalty(i));
             let mut value = projection + ceiling * self.pool.stddevs[i];
             // Clamped below 1 so a 100%-owned player is faded, not zeroed.
             let owned = self.pool.ownership[i].clamp(0.0, 0.99);
@@ -2475,6 +2557,87 @@ mod tests {
         assert_eq!(
             build_lineups(&pool.view(), &spec, &cfg),
             Err(BuildError::NoProfiles)
+        );
+    }
+
+    #[test]
+    fn diversity_weight_off_by_default_and_reproduces_the_plain_build() {
+        // The guarantee that lets this ship without changing anybody's output.
+        let pool = make_pool();
+        let spec = tiny_spec(team_ids(16), 30_000, 0);
+        let mut cfg = config(40);
+        cfg.attempts_per_lineup = 8;
+        cfg.chunks = 4;
+        let plain = build_lineups(&pool.view(), &spec, &cfg).unwrap();
+
+        let mut explicit = cfg.clone();
+        explicit.diversity_weight = 0.0;
+        assert_eq!(
+            build_lineups(&pool.view(), &spec, &explicit).unwrap(),
+            plain
+        );
+    }
+
+    #[test]
+    fn diversity_weight_spreads_the_portfolio_across_more_players() {
+        // The claim the parameter exists to make. Asserted rather than left to a
+        // benchmark, because a knob that changed nothing measurable would be
+        // documentation.
+        let pool = make_pool();
+        let spec = tiny_spec(team_ids(16), 30_000, 0);
+        let mut cfg = config(40);
+        cfg.attempts_per_lineup = 8;
+        cfg.chunks = 4;
+
+        let plain = build_lineups(&pool.view(), &spec, &cfg).unwrap();
+        let mut faded = cfg.clone();
+        faded.diversity_weight = 1.0;
+        let spread = build_lineups(&pool.view(), &spec, &faded).unwrap();
+
+        let distinct = |lineups: &[Lineup]| {
+            lineups
+                .iter()
+                .flat_map(|l| l.iter().copied())
+                .collect::<HashSet<u32>>()
+                .len()
+        };
+        assert!(
+            distinct(&spread) > distinct(&plain),
+            "fading used players should reach more of the pool: {} against {}",
+            distinct(&spread),
+            distinct(&plain)
+        );
+    }
+
+    #[test]
+    fn diversity_weight_is_deterministic() {
+        // It reads a per-chunk count, never a shared one, precisely so this holds.
+        let pool = make_pool();
+        let spec = tiny_spec(team_ids(16), 30_000, 0);
+        let mut cfg = config(40);
+        cfg.attempts_per_lineup = 8;
+        cfg.diversity_weight = 0.75;
+        let a = build_lineups(&pool.view(), &spec, &cfg).unwrap();
+        let b = build_lineups(&pool.view(), &spec, &cfg).unwrap();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn diversity_weight_never_costs_lineups() {
+        // The reason it is a preference and not a cap: an exposure limit reaches
+        // the same spread by discarding finished lineups, and this must not.
+        let pool = make_pool();
+        let spec = tiny_spec(team_ids(16), 30_000, 0);
+        let mut cfg = config(30);
+        cfg.attempts_per_lineup = 12;
+        cfg.chunks = 4;
+        let plain = build_lineups(&pool.view(), &spec, &cfg).unwrap().len();
+
+        let mut faded = cfg.clone();
+        faded.diversity_weight = 2.0;
+        assert_eq!(
+            build_lineups(&pool.view(), &spec, &faded).unwrap().len(),
+            plain
         );
     }
 

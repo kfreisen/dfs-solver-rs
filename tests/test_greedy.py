@@ -12,6 +12,7 @@ from dataclasses import replace
 import mlb_dfs_solver
 import numpy as np
 import pytest
+from baselines.reference import validity_report
 from conftest import make_records
 from mlb_dfs_solver import CONTRARIAN, STANDARD, JitterProfile, build_lineups
 from mlb_dfs_solver.greedy import assign_locks
@@ -891,3 +892,50 @@ def test_a_negative_leverage_exponent_chases_chalk(
         profiles=[JitterProfile((0.3, 1.0), (-1.5, -0.5))],
     )
     assert float(np.mean(tiny_pool.ownership[chalk])) > float(np.mean(tiny_pool.ownership[fade]))
+
+
+def test_diversity_weight_defaults_to_off(mlb_pool: PlayerPool, mlb_spec: RosterSpec) -> None:
+    """The guarantee that lets this ship without changing anybody's output."""
+    plain = build_lineups(mlb_pool, mlb_spec, num_lineups=120, seed=4)
+    explicit = build_lineups(mlb_pool, mlb_spec, num_lineups=120, seed=4, diversity_weight=0.0)
+    np.testing.assert_array_equal(plain, explicit)
+
+
+def test_diversity_weight_reaches_more_of_the_pool(
+    mlb_pool: PlayerPool, mlb_spec: RosterSpec
+) -> None:
+    """The claim the parameter exists to make."""
+    kwargs = {"num_lineups": 400, "seed": 4, "attempts_per_lineup": 6, "chunks": 8}
+    plain = build_lineups(mlb_pool, mlb_spec, **kwargs)
+    spread = build_lineups(mlb_pool, mlb_spec, diversity_weight=1.0, **kwargs)
+    assert len(set(spread.ravel().tolist())) > len(set(plain.ravel().tolist()))
+
+
+def test_diversity_weight_does_not_cost_lineups(mlb_pool: PlayerPool, mlb_spec: RosterSpec) -> None:
+    """A preference, not a cap. An exposure limit reaches the same spread by
+    discarding finished lineups; this must not."""
+    kwargs = {"num_lineups": 300, "seed": 4, "attempts_per_lineup": 8, "chunks": 8}
+    plain = build_lineups(mlb_pool, mlb_spec, **kwargs)
+    spread = build_lineups(mlb_pool, mlb_spec, diversity_weight=2.0, **kwargs)
+    assert len(spread) == len(plain)
+
+
+def test_diversity_weight_is_reproducible(mlb_pool: PlayerPool, mlb_spec: RosterSpec) -> None:
+    kwargs = {"num_lineups": 200, "seed": 4, "attempts_per_lineup": 6, "diversity_weight": 0.8}
+    np.testing.assert_array_equal(
+        build_lineups(mlb_pool, mlb_spec, **kwargs), build_lineups(mlb_pool, mlb_spec, **kwargs)
+    )
+
+
+def test_diversity_weight_rejects_a_negative(mlb_pool: PlayerPool, mlb_spec: RosterSpec) -> None:
+    with pytest.raises(ValueError, match="diversity_weight must be non-negative"):
+        build_lineups(mlb_pool, mlb_spec, num_lineups=5, diversity_weight=-0.5)
+
+
+def test_diversity_weight_lineups_stay_valid(mlb_pool: PlayerPool, mlb_spec: RosterSpec) -> None:
+    """Fading changes what construction prefers, never what it is allowed to do."""
+    lineups = build_lineups(
+        mlb_pool, mlb_spec, num_lineups=200, seed=4, attempts_per_lineup=6, diversity_weight=1.5
+    )
+    assert len(lineups) > 0
+    assert validity_report(lineups, mlb_pool, mlb_spec) == ""
