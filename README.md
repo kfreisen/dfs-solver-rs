@@ -118,8 +118,9 @@ What those columns mean:
 - **Projection, min → max** — the lowest and highest entry, as fractions of the optimum. A solver
   enumerating by projection produces a narrow band, since "second best" means "the best one with
   a player swapped".
-- **Top player's share** — fraction of lineups containing the most-used player. Read this rather
-  than the exposure cap you requested; the two differ when yield falls short.
+- **In >50% of entries** — how many players appear in more than half the draw. A concentration
+  measure that discriminates; "share of the most-used player" does not, since on this slate that
+  is 100% everywhere — the cheapest good pitcher is taken every time.
 - **No-good cuts** — how a solver is made to produce a different lineup each time: after each
   roster, add a constraint that at least one of its players must be dropped next.
 - **Returned** — how many requested lineups came back, for both implementations. A solver is

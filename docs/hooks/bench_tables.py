@@ -49,11 +49,11 @@ def duration(seconds: float) -> str:
         return f"{seconds * 1e6:.0f} µs"
     if seconds < 1.0:
         return f"{seconds * 1e3:.0f} ms"
-    if seconds < 90.0:
+    if seconds < 600.0:
         return f"{seconds:.1f} s"
     if seconds < 5400.0:
-        return f"{seconds / 60:.0f} min"
-    return f"{seconds / 3600:.1f} hr"
+        return f"{seconds / 60:.1f} min"
+    return f"{seconds / 3600:.2f} hr"
 
 
 def latest_results() -> list[dict[str, Any]]:

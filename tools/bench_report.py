@@ -51,11 +51,11 @@ def duration(seconds: float) -> str:
         return f"{seconds * 1e6:.0f} µs"
     if seconds < 1.0:
         return f"{seconds * 1e3:.2f} ms"
-    if seconds < 90.0:
+    if seconds < 600.0:
         return f"{seconds:.1f} s"
     if seconds < 5400.0:
-        return f"{seconds / 60:.0f} min"
-    return f"{seconds / 3600:.1f} hr"
+        return f"{seconds / 60:.1f} min"
+    return f"{seconds / 3600:.2f} hr"
 
 
 def latest_result() -> Path | None:
@@ -104,15 +104,16 @@ def readme_summary(report: dict[str, Any]) -> str:
             "entries cluster at the optimum and are built from a fraction of the "
             "slate. Which output you want depends on the contest.",
             "",
-            "| | Players used | Projection, min → max | Top player's share | Entries |",
+            "| | Players used | In >50% of entries | Projection, min → max | Entries |",
             "| --- | ---: | ---: | ---: | ---: |",
         ]
         for label, case in (("This package", ours), ("Solver + no-good cuts", solver)):
             q = case["quality"]
             lines.append(
                 f"| {label} | **{q['distinct_players']} of {q['pool_size']}** | "
+                f"{q['players_over_50pct']} | "
                 f"{q.get('worst_ratio', 0):.0%} → {q.get('best_ratio', 0):.0%} of optimum | "
-                f"{q['max_exposure']:.0%} | {q['lineups']:,} |"
+                f"{q['lineups']:,} |"
             )
 
     contest = grouped.get(CONTEST_SCENARIO, {})

@@ -105,13 +105,17 @@ solver enumerating by projection produces a very narrow band — its worst entry
 close to its best — because "second best" means "the best one with a player
 swapped". Randomized construction produces a wide one.
 
-### `top player's share`
+### `in >50% of entries`
 
-The fraction of lineups containing the most-used player. Says how concentrated
-the draw is on a single name, which is what an exposure cap exists to control.
+How many players appear in more than half the draw. A concentration measure that
+actually discriminates, which "share of the most-used player" does not: on this
+slate that is 100% for every implementation and every configuration, because the
+cheapest good pitcher is taken every time. See `max_exposure` in the per-scenario
+detail for the raw figure.
 
-Read this rather than the cap you requested: the cap is computed against lineups
-*requested*, so when yield falls short the realized share runs higher than asked.
+Where an exposure cap is set, read the realized figure rather than the cap
+requested. The limit is computed against lineups *requested*, so when yield falls
+short the realized share runs higher than asked.
 
 ### `returned` / yield
 
