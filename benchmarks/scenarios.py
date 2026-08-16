@@ -18,13 +18,24 @@ the whole configuration rather than a toy.
 | Scenario | What it adds | Entries |
 | --- | --- | ---: |
 | `rules-only` | what DraftKings enforces, nothing else | 150 |
+| `single-entry` | one lineup — the case a solver wins | 1 |
 | `cash` | a salary floor, few entries | 20 |
 | `stack` | a four-hitter team stack | 150 |
 | `conflict` | no hitters against the rostered pitcher | 150 |
 | `locks` | an ace and a value bat in every lineup | 150 |
 | `mme` | exposure caps on everyone else | 150 |
+| `mme-diverse` | fading players the portfolio already used | 150 |
 | `showdown` | single game, captain at 1.5x score and salary | 150 |
 | `contest-scale` | the `mme` configuration at field size | 10,000 |
+
+`single-entry` is where the solver legitimately wins: on one roster CP-SAT
+proves the optimum and randomized construction returns something slightly
+worse. The row exists because a comparison that only shows the cases this
+package wins is an advertisement.
+
+`mme-diverse` has no solver row. `diversity_weight` is a preference with no
+CP-SAT analog, and its comparator is the `mme` row directly above it — the same
+configuration with the preference off.
 
 ## What is not expressible
 
@@ -42,7 +53,7 @@ generating with a stack and filtering afterwards — which measures a filter.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
 from mlb_dfs_solver.presets import DK_MLB_CLASSIC, DK_MLB_SHOWDOWN
@@ -80,8 +91,16 @@ class Scenario:
             comparison is "how does the output differ at this budget".
         locks: Players forced into every lineup.
         max_exposure: Per-player ceiling, applied by both implementations.
-        solver: Whether to run the MILP baseline. Off only where it cannot
-            finish in a sane wall clock.
+        solver: Whether to run the MILP baseline. Off where it cannot finish in
+            a sane wall clock, or where the thing measured has no solver analog.
+        solver_budget_s: Wall-clock budget for the solver's whole portfolio, or
+            None for no budget. The contest-scale row sets one because 10,000
+            no-good-cut solves have no natural upper bound; the report then says
+            how many lineups the budget bought, which is the honest form of the
+            claim.
+        build_extra: Extra keyword arguments for `build_lineups`, merged last.
+            How a scenario reaches a knob — `diversity_weight` — without this
+            dataclass growing a field per parameter.
     """
 
     name: str
@@ -93,6 +112,8 @@ class Scenario:
     locks: tuple[int, ...] = ()
     max_exposure: dict[int, float] | None = None
     solver: bool = True
+    solver_budget_s: float | None = None
+    build_extra: dict[str, Any] = field(default_factory=dict)
 
     @property
     def build_kwargs(self) -> dict[str, Any]:
@@ -103,6 +124,7 @@ class Scenario:
             "attempts_per_lineup": self.attempts,
             "locks": list(self.locks) or None,
             "max_exposure": self.max_exposure,
+            **self.build_extra,
         }
 
     @property
@@ -112,6 +134,7 @@ class Scenario:
             "num_lineups": self.entries,
             "locks": list(self.locks) or None,
             "max_exposure": self.max_exposure,
+            **({"budget_s": self.solver_budget_s} if self.solver_budget_s else {}),
         }
 
 
@@ -203,6 +226,16 @@ def build_scenarios() -> list[Scenario]:
             entries=MME_ENTRIES,
         ),
         Scenario(
+            name="single-entry",
+            detail="one lineup under cash rules — the case a solver wins",
+            pool=pool,
+            spec=floor,
+            entries=1,
+            # A one-lineup build is microseconds; a real budget is what a player
+            # asking for one roster would give it.
+            attempts=200,
+        ),
+        Scenario(
             name="cash",
             detail="+ a salary floor, played a few entries deep",
             pool=pool,
@@ -245,6 +278,20 @@ def build_scenarios() -> list[Scenario]:
             max_exposure=caps,
         ),
         Scenario(
+            name="mme-diverse",
+            detail="+ diversity_weight=0.6, fading players the portfolio already used",
+            pool=pool,
+            spec=conflicted,
+            entries=MME_ENTRIES,
+            attempts=10,
+            locks=locks,
+            max_exposure=caps,
+            # No CP-SAT analog: this is a preference, not a constraint. The
+            # comparator is the `mme` row, which is this row with the weight off.
+            solver=False,
+            build_extra={"diversity_weight": 0.6},
+        ),
+        Scenario(
             name="showdown",
             detail="single game, captain at 1.5x score and salary, both teams required",
             pool=showdown_pool,
@@ -261,17 +308,23 @@ def build_scenarios() -> list[Scenario]:
             attempts=15,
             locks=contest_locks,
             max_exposure=contest_caps,
+            # 10,000 no-good-cut solves have no natural upper bound — the last
+            # attempt at an unbudgeted run was killed mid-way. Four hours buys a
+            # measured per-lineup cost and an honest "N of 10,000 in 4 h" row.
+            solver_budget_s=4 * 3600.0,
         ),
     ]
 
 
 SCENARIO_NAMES: tuple[str, ...] = (
     "rules-only",
+    "single-entry",
     "cash",
     "stack",
     "conflict",
     "locks",
     "mme",
+    "mme-diverse",
     "showdown",
     "contest-scale",
 )

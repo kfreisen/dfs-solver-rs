@@ -248,6 +248,7 @@ def _portfolio(
     conflict_pairs: Sequence[tuple[int, int]] | None,
     max_exposure: float | Mapping[int, float] | None,
     time_limit_s: float,
+    budget_s: float | None,
 ) -> list[list[int]]:
     """Re-solve with no-good cuts until `num_lineups` distinct lineups exist.
 
@@ -258,7 +259,16 @@ def _portfolio(
     kernel solves. Applied between solves instead: a player who has reached their
     limit is banned from the next model. That is the same greedy rule the kernel
     uses at its merge, so the comparison stays like for like.
+
+    `budget_s` bounds the whole loop by wall clock, checked before each solve.
+    Ten thousand sequential solves have no natural upper bound, and a benchmark
+    that either finishes in the tens of hours or gets killed mid-run produces no
+    number at all. Stopping at the budget and returning what exists turns the
+    claim into a measurement: this many lineups is what the budget bought.
     """
+    from time import perf_counter
+
+    started = perf_counter()
     limits: dict[int, int] = {}
     if max_exposure is not None:
         fractions = (
@@ -272,6 +282,8 @@ def _portfolio(
     cuts: list[frozenset[int]] = []
     appearances: dict[int, int] = {}
     for _ in range(num_lineups):
+        if budget_s is not None and perf_counter() - started >= budget_s:
+            break
         banned = [p for p, limit in limits.items() if appearances.get(p, 0) >= limit]
         lineup = solve(  # type: ignore[operator]
             pool,
@@ -300,6 +312,7 @@ def solve_portfolio_ortools(
     conflict_pairs: Sequence[tuple[int, int]] | None = None,
     max_exposure: float | Mapping[int, float] | None = None,
     time_limit_s: float = 30.0,
+    budget_s: float | None = None,
 ) -> list[list[int]]:
     """Produce `num_lineups` distinct lineups with CP-SAT and no-good cuts.
 
@@ -310,6 +323,10 @@ def solve_portfolio_ortools(
     hundreds of times slower, because proving optimality means ruling out every
     interchangeable alternative. A benchmark that reports solver time without
     saying whether its inputs are degenerate is reporting the degeneracy.
+
+    `budget_s`, when set, caps the whole loop by wall clock and returns whatever
+    was found by then — see `_portfolio` for why that is the honest form of a
+    contest-scale claim.
     """
     return _portfolio(
         solve_milp_ortools,
@@ -320,4 +337,5 @@ def solve_portfolio_ortools(
         conflict_pairs=conflict_pairs,
         max_exposure=max_exposure,
         time_limit_s=time_limit_s,
+        budget_s=budget_s,
     )

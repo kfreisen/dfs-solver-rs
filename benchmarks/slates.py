@@ -92,6 +92,11 @@ _HITTER_TIERS = tuple((2_000 + i * 420, 5.0 + i * 0.62) for i in range(12))
 # than 0.83, because there were simply better candidates to choose from.
 _PER_POSITION = 32
 
+# Pairwise overlap is quadratic in the portfolio: 10,000 lineups is fifty
+# million pairs. A seeded sample of this many keeps the figure exact for every
+# scenario up to MME size and a stable estimate at contest scale.
+_OVERLAP_SAMPLE = 500
+
 
 def make_slate(per_position: int = _PER_POSITION) -> PlayerPool:
     """A realistic-shaped DraftKings MLB slate, with games as well as teams.
@@ -275,6 +280,8 @@ def describe_lineups(
         "team_block_median": int(np.median(blocks)),
         "team_block_max": int(max(blocks)),
     }
+    if n > 1:
+        described["mean_overlap"] = round(_mean_overlap(np.asarray(lineups), len(pool)), 4)
     if optimum:
         described["best_ratio"] = round(float(projections.max()) / optimum, 4)
         described["median_ratio"] = round(float(np.median(projections)) / optimum, 4)
@@ -288,7 +295,30 @@ def lineup_overlap(a: Sequence[int], b: Sequence[int]) -> float:
     The diversity measure the portfolio argument rests on. Two lineups differing
     by one player out of ten overlap 0.9, and a portfolio of those is not a
     portfolio.
+
+    This is the readable definition; `describe_lineups` reports its mean over
+    every pair through the vectorized form in `_mean_overlap`, which computes
+    the same quantity as a membership-matrix product.
     """
     if not a:
         return 0.0
     return len(set(a) & set(b)) / len(set(a))
+
+
+def _mean_overlap(lineups: np.ndarray, pool_size: int) -> float:
+    """Mean `lineup_overlap` over every pair, on a seeded sample when large.
+
+    A `(sample, pool)` membership matrix `M` gives shared-player counts as
+    `M @ M.T`; the mean of the off-diagonal entries over the roster size is the
+    mean pairwise overlap. Sampling is seeded so the figure is reproducible from
+    a committed result.
+    """
+    sample = lineups
+    if len(sample) > _OVERLAP_SAMPLE:
+        picks = np.random.default_rng(0).choice(len(sample), size=_OVERLAP_SAMPLE, replace=False)
+        sample = sample[picks]
+    m = len(sample)
+    member = np.zeros((m, pool_size), dtype=np.float32)
+    member[np.arange(m)[:, None], sample] = 1.0
+    shared = member @ member.T
+    return float((shared.sum() - np.trace(shared)) / (m * (m - 1)) / lineups.shape[1])
