@@ -52,6 +52,37 @@ _SECOND_POSITION = {
 }
 _MULTI_POSITION_EVERY = 3
 
+# Pitchers and hitters are different markets and pricing them off one formula was
+# wrong. A DraftKings MLB slate has no $2,500 pitcher: the floor is a reliever
+# around $4,000, and the ladder runs through bad starters, mid starters, top
+# starters and aces at $11-12k. Hitters occupy a much narrower band, roughly
+# $2,000 to $6,500.
+#
+# It is not cosmetic. Under the old shared formula exactly three pitchers cost
+# $2,500, hitters ate the cap, and construction reached the pitcher slots with
+# $5,000 left — so it took the same two minimum-priced arms in 100% of lineups,
+# and only 3 of 32 pitchers ever appeared. That read as a diversity failure and
+# was a pricing artefact.
+#
+# `(salary, points)` per tier. Points are what the tier is worth before the
+# mispricing term below; pitchers out-score hitters in DraftKings scoring, which
+# is why two of them eat a third of the cap.
+_PITCHER_TIERS = (
+    (4_000, 5.5),  # reliever, an inning or two
+    (4_600, 7.0),
+    (5_200, 8.5),
+    (6_000, 10.5),  # back-end starter
+    (6_600, 12.0),
+    (7_200, 13.5),
+    (7_800, 15.0),  # mid rotation
+    (8_400, 16.5),
+    (9_000, 18.0),
+    (9_800, 19.5),  # front line
+    (10_600, 21.0),
+    (11_800, 23.0),  # ace
+)
+_HITTER_TIERS = tuple((2_000 + i * 420, 5.0 + i * 0.62) for i in range(12))
+
 # Thirty-two per position, outfield tripled, so 288 players — the size of a real
 # DraftKings MLB main slate. Sized up twice, both times because a thin slate was
 # measuring the wrong thing. At 90 players the later constraint rungs ran out of
@@ -79,6 +110,11 @@ def make_slate(per_position: int = _PER_POSITION) -> PlayerPool:
     two lineups out of 150 before this was fixed, not because conflicts are hard
     but because excluding a team excluded a price bracket. Mixing by `7k + 3p`
     keeps the correlation at 0.09 with teams still evenly sized.
+
+    Pitchers and hitters are priced off separate ladders — see `_PITCHER_TIERS`.
+    Two pitchers eat roughly a third of the cap on a real slate, which is the
+    allocation decision the whole problem turns on, and pricing both markets off
+    one formula removed it.
 
     Projections are distinct per player, which the obvious `4.0 + (k % 12) * 1.2`
     is not: it gives a 144-player slate twelve distinct `(salary, projection)`
@@ -115,20 +151,25 @@ def make_slate(per_position: int = _PER_POSITION) -> PlayerPool:
             positions = (position,)
             if position in _SECOND_POSITION and k % _MULTI_POSITION_EVERY == 0:
                 positions = (position, _SECOND_POSITION[position])
+            tiers = _PITCHER_TIERS if position == "P" else _HITTER_TIERS
+            salary, base = tiers[k % 12]
+            # Mispricing, scaled to the market. Pitchers score more and swing
+            # more, so the same relative error is worth more points there.
+            spread = 1.6 if position == "P" else 0.9
             records.append(
                 {
                     "name": f"{position}-{k}",
                     "positions": positions,
-                    "salary": 2500 + (k % 12) * 750,
+                    "salary": salary,
                     "projection": (
-                        4.0
-                        + (k % 12) * 1.2
+                        base
                         + (k // 12) * 0.29
                         + position_index * 0.037
                         # Value, decoupled from price. See below.
-                        + (((k * 13 + position_index * 5) % 7) - 3) * 0.9
+                        + (((k * 13 + position_index * 5) % 7) - 3) * spread
                     ),
-                    "stddev": 3.0 + (k % 4),
+                    # Pitchers are the highest-variance roster spot in baseball.
+                    "stddev": (5.0 if position == "P" else 3.0) + (k % 4),
                     "ownership": ((k * 7) % 30) / 100.0,
                     "team": f"TM{team}",
                     "opponent": f"TM{opponent}",
@@ -158,14 +199,16 @@ def make_showdown_slate(per_team: int = 20) -> PlayerPool:
                     # Showdown slots accept anyone; the label is kept so the pool
                     # still reads like a baseball roster.
                     "positions": ("P",) if k == 0 else ("OF",),
-                    "salary": 2500 + (k % 12) * 750,
+                    # One starter per side, priced as a starter; the rest are
+                    # bats. Showdown salaries sit lower than classic because six
+                    # roster spots share the same cap.
+                    "salary": (_PITCHER_TIERS if k == 0 else _HITTER_TIERS)[(k or 9) % 12][0],
                     "projection": (
-                        4.0
-                        + (k % 12) * 1.2
+                        (_PITCHER_TIERS if k == 0 else _HITTER_TIERS)[(k or 9) % 12][1]
                         + team_index * 0.31
                         + (((k * 13 + team_index * 5) % 7) - 3) * 0.9
                     ),
-                    "stddev": 3.0 + (k % 4),
+                    "stddev": (5.0 if k == 0 else 3.0) + (k % 4),
                     "ownership": ((k * 7) % 30) / 100.0,
                     "team": f"TM{team_index}",
                 }
