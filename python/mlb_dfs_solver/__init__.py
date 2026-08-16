@@ -25,7 +25,13 @@ from __future__ import annotations
 
 from mlb_dfs_solver._native import __version__ as _native_version
 from mlb_dfs_solver._native import active_isa
-from mlb_dfs_solver.greedy import CONTRARIAN, STANDARD, JitterProfile, build_lineups
+from mlb_dfs_solver.greedy import (
+    CONTRARIAN,
+    STANDARD,
+    JitterProfile,
+    assign_locks,
+    build_lineups,
+)
 from mlb_dfs_solver.pool import PlayerPool
 from mlb_dfs_solver.select import (
     field_line,
@@ -47,6 +53,7 @@ __all__ = [
     "Slot",
     "__version__",
     "active_isa",
+    "assign_locks",
     "build_lineups",
     "field_line",
     "native_version",

@@ -321,10 +321,11 @@ the portfolio spreads without anything being discarded. Use the cap for a hard
 ceiling on named players, and this to spread everything else — which is the
 answer to not wanting to write down a ceiling for all 288.
 
-It needs a history to fade against. Each chunk reads its own, so the mechanism
-does nothing unless `num_lineups × attempts_per_lineup / chunks` is at least
-about three. A 20-lineup portfolio at the default `chunks=64` gets one attempt
-per chunk and no effect; lower `chunks` for those.
+Each chunk fades against its own accepted lineups, so a chunk needs a few
+attempts before the mechanism does anything. The kernel guarantees that by
+treating `chunks` as an upper bound and clamping it — no arithmetic is required
+of the caller. That clamp also fixes two neighbouring defects: below it the
+jitter profiles stopped alternating, and the attempt budget ran over.
 
 Two alternatives were built and measured before settling here. A **global
 snapshot**, refreshed in sequential waves, spread exposure just as well but left

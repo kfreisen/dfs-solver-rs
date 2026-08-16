@@ -150,8 +150,14 @@ pub struct GreedyConfig {
     /// Attempts to make per requested lineup before giving up. Attempts fail when
     /// the greedy fill paints itself into a corner, so a tight pool needs more.
     pub attempts_per_lineup: usize,
-    /// Independent work units. Fixed rather than thread-derived, so results do not
-    /// depend on the machine.
+    /// Upper bound on independent work units. Fixed rather than thread-derived,
+    /// so results do not depend on the machine.
+    ///
+    /// An upper bound rather than a literal count: splitting fewer than
+    /// [`MIN_ATTEMPTS_PER_CHUNK`] attempts into a chunk breaks the profile cycle
+    /// and `diversity_weight`, so [`effective_chunks`] clamps it. Consequently
+    /// this changes the output only while it is the binding constraint — above
+    /// the clamp, two different values give the same answer.
     pub chunks: usize,
     /// Profiles cycled across attempts.
     pub profiles: Vec<JitterProfile>,
@@ -601,7 +607,8 @@ pub fn build_lineups(
     let total_attempts = config
         .num_lineups
         .saturating_mul(config.attempts_per_lineup);
-    let per_chunk = (total_attempts / config.chunks).max(1);
+    let effective_chunks = effective_chunks(total_attempts, config.chunks);
+    let per_chunk = (total_attempts / effective_chunks).max(1);
     // Scaling by the pool's mean projection is what makes the weight unitless:
     // 1.0 docks a player used in every lineup by one average player's worth of
     // value, on a slate scoring eight points a man or eighty.
@@ -705,6 +712,47 @@ pub fn build_lineups(
         }
     }
     Ok(all)
+}
+
+/// Attempts a chunk needs before the per-chunk mechanisms mean anything.
+///
+/// Two things read the per-chunk attempt index, and both stop working when it is
+/// too small:
+///
+/// * the profile cycle is `profiles[attempt % profiles.len()]`, so at one attempt
+///   per chunk every chunk draws `profiles[0]` and no other. With the default
+///   pair that means `CONTRARIAN` runs and `STANDARD` never does — silently
+///   deleting half the mechanism whose whole job is to stop the pool collapsing
+///   onto one high-ceiling core.
+/// * `diversity_weight` fades against the chunk's own accepted lineups, and a
+///   chunk with no history has nothing to fade against.
+///
+/// Four is enough for the default two-profile cycle to come round twice and for a
+/// fade to have something to read.
+const MIN_ATTEMPTS_PER_CHUNK: usize = 4;
+
+/// How many chunks to actually split the work across.
+///
+/// `config.chunks` is an *upper bound* on parallel width, not a literal count.
+/// Taken literally it silently breaks small builds: at the shipped defaults a
+/// 20-lineup portfolio is 60 attempts over 64 chunks, so every chunk gets one
+/// attempt, the profile cycle never advances, `diversity_weight` does nothing,
+/// and 64 attempts run where 60 were asked for.
+///
+/// Clamping here rather than asking the caller to compute it is deliberate. The
+/// arithmetic couples four parameters — `num_lineups`, `attempts_per_lineup`,
+/// `chunks`, `diversity_weight` — and nothing in the signature or the types hints
+/// that the first three decide whether the fourth functions.
+///
+/// Determinism is unaffected: this is a pure function of values the caller
+/// supplied, so the output remains fixed by the inputs. What it does change is
+/// that `chunks` only moves the result while it is the binding constraint —
+/// above the clamp two different chunk counts give the same answer. That is a
+/// weaker contract than "chunks always changes the output" and is stated as such
+/// on `GreedyConfig::chunks`.
+fn effective_chunks(total_attempts: usize, chunks: usize) -> usize {
+    let supportable = (total_attempts / MIN_ATTEMPTS_PER_CHUNK).max(1);
+    chunks.min(supportable)
 }
 
 /// How much to dock a player for already being used.
@@ -1557,8 +1605,110 @@ mod tests {
         assert_ne!(a, b, "the seed is not reaching the generator");
     }
 
+    #[test]
+    fn a_chunk_always_gets_enough_attempts_to_cycle_and_fade() {
+        // The arithmetic behind `effective_chunks`. Taken literally, the shipped
+        // default of 64 chunks gives a 20-lineup build one attempt each, which
+        // silently deletes the second jitter profile and `diversity_weight`.
+        for (total, chunks, expected) in [
+            (3, 64, 1),   // one lineup: a single chunk, three attempts
+            (60, 64, 15), // twenty lineups at the default attempt budget
+            (192, 64, 48),
+            (450, 64, 64), // large builds keep the full width
+            (10_000, 64, 64),
+        ] {
+            let effective = effective_chunks(total, chunks);
+            assert_eq!(effective, expected, "total={total} chunks={chunks}");
+            assert!(
+                total / effective.max(1) >= MIN_ATTEMPTS_PER_CHUNK
+                    || total < MIN_ATTEMPTS_PER_CHUNK,
+                "total={total} left {} attempts per chunk",
+                total / effective.max(1)
+            );
+        }
+    }
+
+    #[test]
+    fn the_attempt_budget_is_never_exceeded() {
+        // `.max(1)` on a literal chunk count used to run more attempts than were
+        // asked for: one lineup at three attempts ran sixty-four.
+        for num_lineups in [1usize, 5, 10, 20, 43, 64, 150, 1000] {
+            let attempts = 3;
+            let total = num_lineups * attempts;
+            let effective = effective_chunks(total, 64);
+            let per_chunk = (total / effective).max(1);
+            assert!(
+                effective * per_chunk <= total,
+                "num_lineups={num_lineups}: ran {} of {total} requested",
+                effective * per_chunk
+            );
+        }
+    }
+
+    #[test]
+    fn both_profiles_are_drawn_on_a_small_build() {
+        // The regression that motivated the clamp. With one attempt per chunk the
+        // cycle never advances, so the whole build ran on `profiles[0]` and the
+        // second profile — the one that stops the pool collapsing onto a single
+        // high-ceiling core — never executed.
+        let pool = make_pool();
+        let spec = tiny_spec(team_ids(16), 30_000, 0);
+        let mut cfg = config(20);
+        cfg.chunks = 64;
+
+        let mixed = build_lineups(&pool.view(), &spec, &cfg).unwrap();
+
+        let mut first_only = cfg.clone();
+        first_only.profiles = vec![cfg.profiles[0]];
+        let collapsed = build_lineups(&pool.view(), &spec, &first_only).unwrap();
+
+        assert_ne!(
+            mixed, collapsed,
+            "a 20-lineup build drew only the first profile, so the pair is decorative"
+        );
+    }
+
+    #[test]
+    fn diversity_weight_works_on_a_small_build() {
+        // Same root cause: a chunk with no accepted lineups has nothing to fade
+        // against, so the weight was silently inert below ~64 lineups.
+        let pool = make_pool();
+        let spec = tiny_spec(team_ids(16), 30_000, 0);
+        let mut cfg = config(20);
+        cfg.chunks = 64;
+
+        let plain = build_lineups(&pool.view(), &spec, &cfg).unwrap();
+        let mut faded = cfg.clone();
+        faded.diversity_weight = 1.0;
+        let spread = build_lineups(&pool.view(), &spec, &faded).unwrap();
+
+        assert_ne!(plain, spread, "diversity_weight was inert at this size");
+    }
+
     /// Chunk count is part of the reproducibility contract, so it must change the
-    /// result — otherwise the contract would be silently weaker than documented.
+    /// Above the clamp, `chunks` stops mattering — and that is worth a test
+    /// rather than a footnote, because it is a real weakening of the contract
+    /// below. Both values here ask for more chunks than the attempt budget can
+    /// support, so both resolve to the same width and the same lineups.
+    #[test]
+    fn chunk_counts_above_the_clamp_agree() {
+        let pool = make_pool();
+        let spec = tiny_spec(team_ids(16), 30_000, 0);
+        // 20 lineups x 3 attempts = 60, so the clamp bites at 15 chunks.
+        let mut a_cfg = config(20);
+        a_cfg.chunks = 64;
+        let mut b_cfg = config(20);
+        b_cfg.chunks = 256;
+        assert_eq!(effective_chunks(60, 64), effective_chunks(60, 256));
+        assert_eq!(
+            build_lineups(&pool.view(), &spec, &a_cfg).unwrap(),
+            build_lineups(&pool.view(), &spec, &b_cfg).unwrap()
+        );
+    }
+
+    /// Chunk count is part of the reproducibility contract *while it binds*, so
+    /// it must change the result — otherwise the contract would be silently
+    /// weaker than documented. Both values here are below the clamp.
     #[test]
     fn chunk_count_is_part_of_the_contract() {
         let pool = make_pool();

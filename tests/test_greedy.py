@@ -939,3 +939,44 @@ def test_diversity_weight_lineups_stay_valid(mlb_pool: PlayerPool, mlb_spec: Ros
     )
     assert len(lineups) > 0
     assert validity_report(lineups, mlb_pool, mlb_spec) == ""
+
+
+@pytest.mark.parametrize("num_lineups", [5, 10, 20, 43, 64, 150])
+def test_both_profiles_are_drawn_at_every_size(
+    mlb_pool: PlayerPool, mlb_spec: RosterSpec, num_lineups: int
+) -> None:
+    """The default profile pair must actually alternate.
+
+    It did not below 43 lineups: `chunks=64` left one attempt per chunk, the
+    cycle never advanced, and every build ran on CONTRARIAN alone — silently
+    deleting the profile whose job is to stop the pool collapsing onto one
+    high-ceiling core.
+    """
+    mixed = build_lineups(mlb_pool, mlb_spec, num_lineups=num_lineups, seed=4)
+    collapsed = build_lineups(
+        mlb_pool, mlb_spec, num_lineups=num_lineups, seed=4, profiles=[CONTRARIAN]
+    )
+    assert mixed.shape != collapsed.shape or not np.array_equal(mixed, collapsed)
+
+
+@pytest.mark.parametrize("num_lineups", [10, 20, 50, 150])
+def test_diversity_weight_is_live_at_every_size(
+    mlb_pool: PlayerPool, mlb_spec: RosterSpec, num_lineups: int
+) -> None:
+    """Same root cause: a chunk with no history has nothing to fade against."""
+    plain = build_lineups(mlb_pool, mlb_spec, num_lineups=num_lineups, seed=4)
+    spread = build_lineups(
+        mlb_pool, mlb_spec, num_lineups=num_lineups, seed=4, diversity_weight=1.0
+    )
+    assert plain.shape != spread.shape or not np.array_equal(plain, spread)
+
+
+def test_chunks_above_the_clamp_agree(mlb_pool: PlayerPool, mlb_spec: RosterSpec) -> None:
+    """`chunks` is an upper bound, so above the clamp it stops mattering.
+
+    Asserted rather than footnoted, because it is a real weakening of the
+    reproducibility contract documented on the parameter.
+    """
+    a = build_lineups(mlb_pool, mlb_spec, num_lineups=20, seed=4, chunks=64)
+    b = build_lineups(mlb_pool, mlb_spec, num_lineups=20, seed=4, chunks=256)
+    np.testing.assert_array_equal(a, b)

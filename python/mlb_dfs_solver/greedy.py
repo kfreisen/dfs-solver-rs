@@ -385,9 +385,18 @@ def build_lineups(
         attempts_per_lineup: Attempts made per requested lineup before giving up.
             Attempts fail when the greedy fill paints itself into a corner, so a
             tightly constrained pool needs more.
-        chunks: Independent work units. Fixed rather than derived from the CPU
-            count, so results do not depend on the machine. Changing it changes
-            the output.
+        chunks: Upper bound on independent work units. Fixed rather than derived
+            from the CPU count, so results do not depend on the machine.
+
+            An upper bound rather than a literal count. A chunk needs a few
+            attempts before the profile cycle advances and `diversity_weight`
+            has a history to fade against, so the kernel clamps this to
+            `total_attempts // 4`. Taken literally, the default would give a
+            20-lineup build one attempt per chunk and silently disable both.
+
+            It therefore changes the output only while it is the binding
+            constraint: above the clamp, two different values give the same
+            answer.
         profiles: Jitter profiles cycled across attempts. Defaults to
             `(CONTRARIAN, STANDARD)`.
         value_weight: How strongly to price salary into a player's value, as a
@@ -437,11 +446,10 @@ def build_lineups(
             | `1.0` | 133 | 13.8% |
 
             The cost is projection: `1.0` gave up 3% of the median entry's
-            points for those. Note it needs a history to fade against — each
-            chunk reads its own — so it does nothing unless
-            `num_lineups * attempts_per_lineup / chunks` is at least about
-            three. A twenty-lineup portfolio at the default `chunks=64` gets one
-            attempt per chunk and no effect; lower `chunks` for those.
+            points for those. Each chunk fades against its own accepted lineups,
+            so a chunk needs a few attempts before this does anything — the
+            kernel clamps `chunks` to guarantee that, and no arithmetic is
+            required of the caller.
         conflict_pairs: Extra `(i, j)` pool-index pairs forbidden from sharing a
             lineup, on top of anything `spec.conflicts` resolves to. Index pairs
             live here rather than on the specification because they are a fact
