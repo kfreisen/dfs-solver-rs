@@ -28,6 +28,11 @@ Two different problems, usually conflated:
 `mlb_dfs_solver` does (2) by randomized greedy construction: perturb the objective, fill slots,
 repeat. It is a weak optimizer per lineup and a fast one per thousand.
 
+The difference in what comes out is plain: a solver's 150 are the top rosters by projection —
+near-identical, drawn from a narrow slice of the slate. These are spread in projection and drawn
+from two to three times as many players. Steering that trade — cash, single-entry, tournament,
+contest scale — is the [recipes page](https://kfreisen.github.io/mlb-dfs-solver/recipes/).
+
 ```
 build_lineups()          score_lineups()            select_portfolio()
   what is legal      ->    what might happen    ->    what to enter
@@ -59,6 +64,9 @@ time and describe what was generated. Which output suits your contest is your ca
   modes. Greedy is within `1 - 1/e` of the optimal portfolio *under the matrix you supply* — a
   guarantee on the search, not on the simulation. You supply the simulation.
 - Sport presets (`mlb_dfs_solver.presets`) shipped as data, not hardcoded branches.
+- Intent-named recipes (`mlb_dfs_solver.recipes`): typed bundles of the interrelated parameters,
+  one per way of playing — cash, single-entry, GPP, candidate pool, showdown — each a printable
+  dataclass whose `.build()` and `.select()` are plain calls to the functions above.
 - Runtime AVX2 dispatch. Wheels are built portably; `mlb_dfs_solver.active_isa()` reports which path
   your machine took.
 
@@ -119,8 +127,9 @@ What those columns mean:
   enumerating by projection produces a narrow band, since "second best" means "the best one with
   a player swapped".
 - **In >50% of entries** — how many players appear in more than half the draw. A concentration
-  measure that discriminates; "share of the most-used player" does not, since on this slate that
-  is 100% everywhere — the cheapest good pitcher is taken every time.
+  measure that discriminates where "share of the most-used player" often does not.
+- **Mean overlap** — average fraction of players two entries share, over every pair. Two lineups
+  differing by one player out of ten overlap 90%, and a portfolio of those is one entry.
 - **No-good cuts** — how a solver is made to produce a different lineup each time: after each
   roster, add a constraint that at least one of its players must be dropped next.
 - **Returned** — how many requested lineups came back, for both implementations. A solver is

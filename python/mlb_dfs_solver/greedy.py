@@ -374,6 +374,10 @@ def build_lineups(
 ) -> np.ndarray:
     """Build a pool of distinct, valid lineups.
 
+    Most parameters interact; [`recipes`][mlb_dfs_solver.recipes] bundles them
+    into named per-contest-type starting points, and the recipes page in the
+    docs maps each interaction.
+
     Args:
         pool: Available players.
         spec: What makes a lineup legal.

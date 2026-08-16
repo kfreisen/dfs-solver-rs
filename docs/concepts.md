@@ -3,7 +3,8 @@
 This page is the background. It explains what problem daily fantasy optimization
 actually is, why the obvious approach is the wrong one, and what each piece of
 this package does about it. The [API reference](api.md) says what the functions
-take; this says why they exist.
+take; this says why they exist. If you want a working configuration for your
+contest type before any of the why, start from [recipes](recipes.md).
 
 ## Two problems
 
@@ -278,6 +279,10 @@ reachable:
 | Cap how often a player is used | `select_portfolio(max_exposure=...)` — see [exposure caps](#exposure-caps) |
 | Always use a player | `locks` |
 | Weight a player up or down | adjust their projection before building |
+
+Bundled per contest type — cash, single-entry, tournament, contest scale,
+showdown — in [recipes](recipes.md), each with the steering table for that way
+of playing.
 
 The division the rest of this follows: **player facts are columns, roster rules
 are the specification, portfolio rules are selection, and calibration constants
