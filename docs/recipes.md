@@ -107,7 +107,7 @@ of median projection), and `mode="gpp"`.
 | --- | --- |
 | Spread wider / tighter | `dataclasses.replace(r, diversity_weight=...)` — `1.0` spreads further at ~3% median projection cost, `0.0` turns it off |
 | Hard ceiling on named players | `replace(r, max_exposure=...)` — applied at selection, where a cap skips candidates instead of discarding lineups. See [exposure caps](concepts.md#exposure-caps) |
-| Always roster someone | `build_lineups(locks=...)` directly — see [locks and exposure](#locks-and-exposure) |
+| Always roster someone | `recipes.gpp(spec, seed=1, locks=[...])` — see [locks and exposure](#locks-and-exposure) |
 | A 4-2 secondary stack | Not expressible — `min_stack` is existential over one team. Recorded in `benchmarks/scenarios.py` rather than worked around |
 | Chalkier / more contrarian | Your own `profiles=` on `build_lineups` — the `leverage` range fades ownership, and a negative exponent inverts the fade |
 
@@ -155,19 +155,26 @@ Locks and caps interact, and one combination is rejected loudly: a locked
 player is in 100% of lineups by construction, so capping them below 100%
 raises `ValueError` rather than silently honouring one of the two. The pattern
 that works — and the one the `mme` benchmark scenario uses — is **lock your
-core, cap everyone else**:
+core, cap everyone else**, which the recipe applies for you:
 
 ```python
-locks = [ace, bargain_bat]
-caps = {i: 0.6 for i in range(len(pool)) if i not in locks}
-lineups = build_lineups(pool, spec, num_lineups=150, seed=1,
-                        locks=locks, max_exposure=caps)
+r = dataclasses.replace(
+    recipes.gpp(spec, seed=1, locks=[ace, bargain_bat]),
+    max_exposure=0.6,
+)
+lineups = r.build(pool)                                # locks in every lineup
+scores = score_lineups(pool, spec, lineups, universe)
+entries = lineups[r.select(scores, line=win_line, lineups=lineups)]
 ```
 
-Read the realized exposure, not the number you passed: the limit is
-`floor(cap × lineups requested)`, a cap lowers yield, and a lower yield raises
-the realized share. If you run selection, cap there instead — it holds much
-closer to what you asked for. The arithmetic is laid out in
+`.select()` exempts the locked players from the cap — they are in every
+candidate, so a blanket cap would stop the whole portfolio at the cap. To pin
+a lock to a slot (a showdown captain), pass a mapping: `locks={index: "CPT"}`.
+
+If you cap at build instead (`build_lineups(max_exposure=...)`), read the
+realized exposure, not the number you passed: the limit is
+`floor(cap × lineups requested)` and any yield shortfall raises the realized
+share. The arithmetic is laid out in
 [exposure caps](concepts.md#exposure-caps).
 
 ## How the knobs interact

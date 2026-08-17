@@ -127,6 +127,42 @@ def test_a_capped_recipe_passes_the_cap_through(
     np.testing.assert_array_equal(r.select(sim, line=line, lineups=lineups), expected)
 
 
+def test_a_locked_recipe_builds_the_handwritten_call(
+    tiny_pool: PlayerPool, tiny_spec: RosterSpec
+) -> None:
+    r = recipes.gpp(tiny_spec, seed=3, entries=30, locks=[0, 8])
+    expected = build_lineups(
+        tiny_pool,
+        tiny_spec,
+        num_lineups=30,
+        seed=3,
+        attempts_per_lineup=10,
+        diversity_weight=0.6,
+        locks=[0, 8],
+    )
+    np.testing.assert_array_equal(r.build(tiny_pool), expected)
+
+
+def test_a_locked_and_capped_recipe_exempts_the_locks_from_the_cap(
+    tiny_pool: PlayerPool, tiny_spec: RosterSpec, universe: np.ndarray
+) -> None:
+    # A locked player is in every candidate; a blanket selection cap would stop
+    # the whole portfolio at the cap. The recipe caps everyone else instead.
+    r = dataclasses.replace(
+        recipes.gpp(tiny_spec, seed=3, entries=30, locks=[0]), max_exposure=0.5
+    )
+    lineups = r.build(tiny_pool)
+    assert (lineups == 0).any(axis=1).all(), "lock must be in every candidate"
+    sim = score_lineups(tiny_pool, tiny_spec, lineups, universe)
+    line = tail_line(sim, 0.9)
+    caps = {i: 0.5 for i in range(int(lineups.max()) + 1) if i != 0}
+    expected = select_portfolio(
+        sim, mode="gpp", line=line, n_select=30, lineups=lineups, max_exposure=caps
+    )
+    chosen = r.select(sim, line=line, lineups=lineups)
+    np.testing.assert_array_equal(chosen, expected)
+
+
 # --- The choices themselves ----------------------------------------------
 
 

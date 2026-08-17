@@ -46,12 +46,14 @@ from __future__ import annotations
 import dataclasses
 from typing import TYPE_CHECKING
 
+import numpy as np
+
 from mlb_dfs_solver.greedy import build_lineups
 from mlb_dfs_solver.select import Mode, select_portfolio
 from mlb_dfs_solver.spec import RosterSpec
 
 if TYPE_CHECKING:
-    import numpy as np
+    from collections.abc import Mapping, Sequence
 
     from mlb_dfs_solver.pool import PlayerPool
 
@@ -95,6 +97,12 @@ class Recipe:
             player, applied at selection — where a cap skips candidates from a
             pool already built — rather than at construction, where it discards
             finished lineups and costs yield.
+        locks: Players forced into every built lineup, as pool indices — or a
+            mapping from index to slot name to pin one (`{7: "CPT"}`). A locked
+            player is in 100% of entries by construction, so when this recipe
+            also caps exposure, `.select()` exempts the locked players from the
+            cap — the same lock-your-core-cap-the-rest rule `build_lineups`
+            enforces by raising on the contradiction.
     """
 
     spec: RosterSpec
@@ -106,6 +114,7 @@ class Recipe:
     mode: Mode | None = None
     n_select: int | None = None
     max_exposure: float | None = None
+    locks: Sequence[int] | Mapping[int, str | None] | None = None
 
     def build(self, pool: PlayerPool) -> np.ndarray:
         """Build the candidate lineups this recipe describes.
@@ -123,6 +132,7 @@ class Recipe:
             attempts_per_lineup=self.attempts_per_lineup,
             value_weight=self.value_weight,
             diversity_weight=self.diversity_weight,
+            locks=self.locks,
         )
 
     def select(
@@ -156,13 +166,22 @@ class Recipe:
                 "to score and select against your own simulator"
             )
             raise ValueError(msg)
+        max_exposure: float | dict[int, float] | None = self.max_exposure
+        if self.max_exposure is not None and self.locks:
+            # A locked player is in every candidate; a blanket cap would stop
+            # the whole portfolio at the cap. Exempt the locks — the same rule
+            # build_lineups enforces by raising on the contradiction.
+            cap = self.max_exposure
+            locked = {int(i) for i in self.locks}
+            size = int(np.asarray(lineups).max()) + 1 if lineups is not None else 0
+            max_exposure = {i: cap for i in range(size) if i not in locked}
         return select_portfolio(
             sim_scores,
             mode=self.mode,
             line=line,
             n_select=self.n_select,
             lineups=lineups,
-            max_exposure=self.max_exposure,
+            max_exposure=max_exposure,
         )
 
 
@@ -223,6 +242,7 @@ def gpp(
     seed: int,
     entries: int = 150,
     diversity_weight: float = 0.6,
+    locks: Sequence[int] | Mapping[int, str | None] | None = None,
 ) -> Recipe:
     """A tournament: many entries that win in different outcomes.
 
@@ -233,6 +253,9 @@ def gpp(
     Your spec passes through untouched. Stacks and the opposing-pitcher conflict
     are strategy this module cannot write for you — they need your slot and key
     names. The recipes page shows the two `dataclasses.replace` lines.
+
+    `locks` forces players into every built lineup; add a `max_exposure` with
+    `dataclasses.replace` to cap everyone else at selection.
     """
     return Recipe(
         spec=spec,
@@ -242,6 +265,7 @@ def gpp(
         diversity_weight=diversity_weight,
         mode=Mode.GPP,
         n_select=entries,
+        locks=locks,
     )
 
 
