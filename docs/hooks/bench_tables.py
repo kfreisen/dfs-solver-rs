@@ -133,6 +133,30 @@ def render_timing_case(case_name: str, measurements: list[dict[str, Any]]) -> li
         )
     lines.append("")
 
+    ours = next((m for m in measurements if m["impl"] == "mlb_dfs_solver_rust"), None)
+    python = next((m for m in measurements if m["impl"] == "reference_python"), None)
+    if case_name == "single-entry" and ours and python and python["median"] < ours["median"]:
+        lines += [
+            "!!! note",
+            "    The pure-Python oracle outruns the kernel here: a microsecond "
+            "job pays the kernel's fixed parallelism setup and gets nothing "
+            "back. The row exists for the solver comparison — one roster is "
+            "the case a solver wins.",
+            "",
+        ]
+    if (
+        case_name == "selection"
+        and ours
+        and ours["params"]["produced"] < ours["params"]["requested"]
+    ):
+        lines += [
+            "!!! note",
+            "    Tournament mode stops once no remaining candidate covers a new "
+            "outcome, so a pool can be exhausted before the requested count is "
+            "reached. That is the objective working, not a shortfall.",
+            "",
+        ]
+
     if len(measurements) == 1:
         lines += [
             "!!! warning",
@@ -211,6 +235,10 @@ def render_workflow(result: dict[str, Any]) -> list[str]:
         "| --- | ---: |",
         *[f"| {s['name']} | {duration(s['seconds'])} |" for s in workflow["stages"]],
         f"| **total** | **{duration(workflow['total_seconds'])}** |",
+        "",
+        "The `draw lines` stage is `np.quantile` over the field's score matrix — "
+        "caller-side NumPy that any pipeline pays regardless of what built the "
+        "lineups.",
         "",
     ]
     for label in ("gpp", "cash"):

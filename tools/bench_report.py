@@ -92,6 +92,7 @@ def readme_summary(report: dict[str, Any]) -> str:
         "| Scenario | Entries | This | Pure Python | CP-SAT | Speedup | Ours | CP-SAT's |",
         "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
         *_scenario_rows(grouped),
+        *_scenario_notes(grouped),
     ]
 
     headline = grouped.get(HEADLINE_SCENARIO, {})
@@ -172,6 +173,11 @@ def _workflow_section(report: dict[str, Any]) -> list[str]:
         "| --- | ---: |",
         *[f"| {s['name']} | {duration(s['seconds'])} |" for s in workflow["stages"]],
         f"| **total** | **{duration(workflow['total_seconds'])}** |",
+        "",
+        "The `draw lines` stage is `np.quantile` over the field's score matrix — "
+        "caller-side NumPy that any pipeline pays regardless of what built the "
+        "lineups. It is timed because a player's session pays it; it is not this "
+        "package's code.",
     ]
     return lines
 
@@ -208,6 +214,34 @@ def _scenario_rows(grouped: dict[str, dict[str, dict[str, Any]]]) -> list[str]:
             f"| {solver_returned} |"
         )
     return kept
+
+
+def _scenario_notes(grouped: dict[str, dict[str, dict[str, Any]]]) -> list[str]:
+    """Footnotes for rows that read as anomalies without one.
+
+    Each is emitted only when the data actually shows the thing it explains, so
+    a fixed slate change cannot leave a stale excuse under a healthy number.
+    """
+    notes: list[str] = []
+    single = grouped.get("single-entry", {})
+    ours, python = single.get(OURS), single.get(PYTHON)
+    if ours and python and python["median"] < ours["median"]:
+        notes.append(
+            "On one lineup the pure-Python oracle outruns the kernel: a "
+            "microsecond job pays the kernel's fixed parallelism setup and gets "
+            "nothing back for it. The row exists for the solver comparison — "
+            "one roster is the case a solver wins."
+        )
+    selection = grouped.get("selection", {}).get(OURS)
+    if selection and selection["params"]["produced"] < selection["params"]["requested"]:
+        notes.append(
+            f"Selection returned {selection['params']['produced']} of "
+            f"{selection['params']['requested']}: tournament mode stops once no "
+            "remaining candidate covers a new outcome, so a pool can be "
+            "exhausted before the count is reached. That is the objective "
+            "working, not a shortfall."
+        )
+    return [x for note in notes for x in ("", note)]
 
 
 def update_readme(report: dict[str, Any]) -> bool:
