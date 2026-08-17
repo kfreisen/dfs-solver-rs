@@ -30,6 +30,7 @@ def build_lineups(
     group_max_counts: np.ndarray,
     group_min_distincts: np.ndarray,
     group_min_stacks: np.ndarray,
+    group_secondary_min_stacks: np.ndarray,
     group_slot_masks: np.ndarray,
     key_columns: np.ndarray,
     conflict_left: np.ndarray,

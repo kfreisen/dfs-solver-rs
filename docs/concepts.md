@@ -176,6 +176,7 @@ path, and nothing in the package branches on which sport it is looking at.
 | "Players from 2 different games" | `GroupConstraint(min_distinct=2)` |
 | Showdown captain worth and costing 1.5× | `Slot(score_multiplier=1.5, salary_multiplier=1.5)` |
 | "At least 4 hitters from one team" | `GroupConstraint(min_stack=4)` |
+| "... and 2 more from a second team" (the 4-2) | the same, with `secondary_min_stack=2` |
 | "No hitters against my pitcher" | [`ConflictRule`][mlb_dfs_solver.spec.ConflictRule] |
 | Locked players | `build_lineups(locks=...)` |
 | Exposure caps | `select_portfolio(max_exposure=...)`, or `build_lineups(max_exposure=...)` |

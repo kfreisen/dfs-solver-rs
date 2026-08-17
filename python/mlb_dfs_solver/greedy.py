@@ -97,6 +97,7 @@ class _Encoded:
     group_max_counts: np.ndarray
     group_min_distincts: np.ndarray
     group_min_stacks: np.ndarray
+    group_secondary_min_stacks: np.ndarray
     group_slot_masks: np.ndarray
     key_columns: np.ndarray
     conflict_left: np.ndarray
@@ -147,6 +148,7 @@ def _encode(
         group_max_counts=slots.group_max_counts,
         group_min_distincts=slots.group_min_distincts,
         group_min_stacks=slots.group_min_stacks,
+        group_secondary_min_stacks=slots.group_secondary_min_stacks,
         group_slot_masks=slots.group_slot_masks,
         key_columns=key_columns,
         conflict_left=np.ascontiguousarray(conflict_pairs[0], dtype=np.uint32),
@@ -169,6 +171,7 @@ class _SlotArrays:
     group_max_counts: np.ndarray
     group_min_distincts: np.ndarray
     group_min_stacks: np.ndarray
+    group_secondary_min_stacks: np.ndarray
     group_slot_masks: np.ndarray
 
 
@@ -201,6 +204,9 @@ def _encode_slots(spec: RosterSpec) -> _SlotArrays:
         group_max_counts=np.asarray([g.cap for g in spec.groups], dtype=np.uint32),
         group_min_distincts=np.asarray([g.min_distinct for g in spec.groups], dtype=np.uint32),
         group_min_stacks=np.asarray([g.min_stack for g in spec.groups], dtype=np.uint32),
+        group_secondary_min_stacks=np.asarray(
+            [g.secondary_min_stack for g in spec.groups], dtype=np.uint32
+        ),
         group_slot_masks=np.asarray(
             [spec.slot_mask_for(g.slots) for g in spec.groups], dtype=np.uint64
         ),
@@ -582,6 +588,7 @@ def build_lineups(
         encoded.group_max_counts,
         encoded.group_min_distincts,
         encoded.group_min_stacks,
+        encoded.group_secondary_min_stacks,
         encoded.group_slot_masks,
         encoded.key_columns,
         encoded.conflict_left,

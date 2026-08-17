@@ -193,16 +193,35 @@ def solve_milp_ortools(
             model.add(sum(used) >= group.min_distinct)
 
         if group.min_stack:
-            reaches = []
+            reaches = {}
             for key, members in members_by_key.items():
                 if len(members) < group.min_stack:
                     continue
                 indicator = model.new_bool_var(f"stack_{group.key}_{key}")
                 model.add(sum(members) >= group.min_stack).only_enforce_if(indicator)
-                reaches.append(indicator)
+                reaches[key] = indicator
             if not reaches:
                 return None
-            model.add(sum(reaches) >= 1)
+            model.add(sum(reaches.values()) >= 1)
+
+            # A 4-2: a second indicator family at the smaller bar, with the two
+            # winners forced onto distinct keys. The secondary-capable keys are
+            # a superset of the primary-capable ones, so "a pair exists" is
+            # exactly "at least two keys reach the secondary bar".
+            if group.secondary_min_stack:
+                secondary = {}
+                for key, members in members_by_key.items():
+                    if len(members) < group.secondary_min_stack:
+                        continue
+                    indicator = model.new_bool_var(f"stack2_{group.key}_{key}")
+                    model.add(sum(members) >= group.secondary_min_stack).only_enforce_if(indicator)
+                    secondary[key] = indicator
+                if len(secondary) < 2:
+                    return None
+                model.add(sum(secondary.values()) >= 1)
+                for key, indicator in secondary.items():
+                    if key in reaches:
+                        model.add(reaches[key] + indicator <= 1)
 
     pairs = list(zip(*pool.conflict_pairs(spec).tolist(), strict=True))
     pairs += list(conflict_pairs or [])

@@ -537,43 +537,57 @@ pub fn build_lineups(
     // know about salary.
     let counted_suffix = spec.counted_suffix();
     let n_keys = (spec.max_key() + 1).max(0) as usize;
-    let capable_keys: Vec<Vec<i32>> = spec
-        .groups
-        .iter()
-        .map(|group| {
-            if group.min_stack == 0 {
-                return Vec::new();
+    let mut capable_keys: Vec<Vec<i32>> = Vec::with_capacity(spec.groups.len());
+    let mut secondary_capable_keys: Vec<Vec<i32>> = Vec::with_capacity(spec.groups.len());
+    for group in &spec.groups {
+        if group.min_stack == 0 {
+            capable_keys.push(Vec::new());
+            secondary_capable_keys.push(Vec::new());
+            continue;
+        }
+        let mut reach = vec![0usize; n_keys];
+        for (j, slot) in spec.slots.iter().enumerate() {
+            if group.slots & (1u64 << j) == 0 {
+                continue;
             }
-            let mut reach = vec![0usize; n_keys];
-            for (j, slot) in spec.slots.iter().enumerate() {
-                if group.slots & (1u64 << j) == 0 {
-                    continue;
-                }
-                let mut per_key = vec![0usize; n_keys];
-                for &player in &eligible[j] {
-                    let key = spec.key_columns[group.key_column][player as usize];
-                    if key >= 0 {
-                        per_key[key as usize] += 1;
-                    }
-                }
-                for (key, available) in per_key.into_iter().enumerate() {
-                    reach[key] += available.min(slot.count);
+            let mut per_key = vec![0usize; n_keys];
+            for &player in &eligible[j] {
+                let key = spec.key_columns[group.key_column][player as usize];
+                if key >= 0 {
+                    per_key[key as usize] += 1;
                 }
             }
+            for (key, available) in per_key.into_iter().enumerate() {
+                reach[key] += available.min(slot.count);
+            }
+        }
+        capable_keys.push(
             (0..n_keys)
                 .filter(|&key| reach[key] >= group.min_stack as usize)
                 .map(|key| key as i32)
+                .collect(),
+        );
+        // The secondary bar is lower (never above the primary), so this list is
+        // a superset of the one above — which is what the pair test relies on.
+        secondary_capable_keys.push(if group.secondary_min_stack == 0 {
+            Vec::new()
+        } else {
+            (0..n_keys)
+                .filter(|&key| reach[key] >= group.secondary_min_stack as usize)
+                .map(|key| key as i32)
                 .collect()
-        })
-        .collect();
+        });
+    }
     // A stack nobody can supply makes every lineup impossible. Saying so here
     // costs one pass over the pool; discovering it by attempt costs all of them.
-    if spec
-        .groups
-        .iter()
-        .enumerate()
-        .any(|(gi, g)| g.min_stack > 0 && capable_keys[gi].is_empty())
-    {
+    // For a 4-2 the requirement is a *pair* of distinct keys: one on the primary
+    // list and a different one on the secondary list. The secondary list being a
+    // superset makes that exactly "at least two keys reach the secondary bar".
+    if spec.groups.iter().enumerate().any(|(gi, g)| {
+        g.min_stack > 0
+            && (capable_keys[gi].is_empty()
+                || (g.secondary_min_stack > 0 && secondary_capable_keys[gi].len() < 2))
+    }) {
         return Ok(Vec::new());
     }
 
@@ -600,6 +614,7 @@ pub fn build_lineups(
         slot_salaries,
         counted_suffix: &counted_suffix,
         capable_keys: &capable_keys,
+        secondary_capable_keys: &secondary_capable_keys,
         value: &value,
         locked_by_slot: &locked_by_slot,
     };
@@ -799,6 +814,9 @@ struct Tables<'a> {
     counted_suffix: &'a [usize],
     /// Key values each stack constraint could be built around.
     capable_keys: &'a [Vec<i32>],
+    /// Key values that could supply the *secondary* stack — a superset of the
+    /// primary list, since the secondary bar is never higher.
+    secondary_capable_keys: &'a [Vec<i32>],
     /// Projections with salary priced in.
     value: &'a [f64],
     /// Players forced into each slot group.
@@ -823,10 +841,15 @@ struct Builder<'a> {
     /// Key values each stack constraint could plausibly be built around, so a
     /// target is never drawn from a team that cannot supply the players.
     capable_keys: &'a [Vec<i32>],
+    /// Key values that could supply the secondary stack, when one is asked for.
+    secondary_capable_keys: &'a [Vec<i32>],
     /// The key value each stack constraint is chasing this attempt, or `-1`.
     /// Redrawn per attempt, which is what spreads a portfolio's stacks across
     /// teams instead of piling every lineup onto the same one.
     stack_targets: Vec<i32>,
+    /// The *second* key value each constraint is chasing, or `-1`. Always
+    /// distinct from the primary target when set.
+    secondary_targets: Vec<i32>,
     /// Projections with salary priced in, which is what the candidate ordering
     /// reads. The pool's own projections stay untouched, because those are what
     /// a finished lineup is reported as being worth.
@@ -862,6 +885,7 @@ impl<'a> Builder<'a> {
             slot_salaries,
             counted_suffix,
             capable_keys,
+            secondary_capable_keys,
             value,
             locked_by_slot,
         } = tables;
@@ -885,8 +909,10 @@ impl<'a> Builder<'a> {
             slot_salaries,
             counted_suffix,
             capable_keys,
+            secondary_capable_keys,
             value,
             stack_targets: vec![-1; spec.groups.len()],
+            secondary_targets: vec![-1; spec.groups.len()],
             locked_by_slot,
             is_locked,
             objective: vec![0.0; n],
@@ -955,6 +981,27 @@ impl<'a> Builder<'a> {
             } else {
                 capable[rng.random_range(0..capable.len())]
             };
+            if group.secondary_min_stack == 0 {
+                continue;
+            }
+            // The secondary target is a *different* key, drawn uniformly from
+            // the secondary-capable list with the primary skipped. Rejection-
+            // free — one draw over `len - 1` and an index shift — so a config
+            // without a secondary stack consumes exactly the RNG calls it
+            // always did, and one with it consumes exactly one more per group.
+            let capable = &self.secondary_capable_keys[gi];
+            let primary = self.stack_targets[gi];
+            self.secondary_targets[gi] = match capable.iter().position(|&k| k == primary) {
+                Some(skip) if capable.len() >= 2 => {
+                    let mut idx = rng.random_range(0..capable.len() - 1);
+                    if idx >= skip {
+                        idx += 1;
+                    }
+                    capable[idx]
+                }
+                None if !capable.is_empty() => capable[rng.random_range(0..capable.len())],
+                _ => -1,
+            };
         }
     }
 
@@ -993,17 +1040,23 @@ impl<'a> Builder<'a> {
     }
 
     /// Whether `player` is one this slot group should take first because a stack
-    /// still wants them.
+    /// still wants them — the primary target short of its minimum, or the
+    /// secondary target short of its smaller one.
     fn feeds_a_stack(&self, player: usize, slot_group: usize) -> bool {
         for (gi, group) in self.spec.groups.iter().enumerate() {
             if group.min_stack == 0 || group.slots & (1u64 << slot_group) == 0 {
                 continue;
             }
+            let key = self.tally.key_of(gi, player);
             let target = self.stack_targets[gi];
-            if target < 0 || self.tally.key_of(gi, player) != target {
-                continue;
+            if target >= 0 && key == target && self.tally.count_of(gi, target) < group.min_stack {
+                return true;
             }
-            if self.tally.count_of(gi, target) < group.min_stack {
+            let secondary = self.secondary_targets[gi];
+            if secondary >= 0
+                && key == secondary
+                && self.tally.count_of(gi, secondary) < group.secondary_min_stack
+            {
                 return true;
             }
         }
@@ -1012,16 +1065,21 @@ impl<'a> Builder<'a> {
 
     /// Whether every stack requirement is met by the finished lineup.
     ///
-    /// Checked against the largest stack actually present, not against the
-    /// target: the constraint asks for *some* key value, and a lineup that
-    /// happened to stack a different team than the one drawn satisfies it just
-    /// as well.
+    /// Checked against the largest stacks actually present, not against the
+    /// targets: the constraint asks for *some* key value (or some pair), and a
+    /// lineup that happened to stack different teams than the ones drawn
+    /// satisfies it just as well.
     fn stacks_satisfied(&self) -> bool {
-        self.spec
-            .groups
-            .iter()
-            .enumerate()
-            .all(|(gi, group)| group.min_stack == 0 || self.tally.max_stack(gi) >= group.min_stack)
+        self.spec.groups.iter().enumerate().all(|(gi, group)| {
+            if group.min_stack == 0 {
+                return true;
+            }
+            if group.secondary_min_stack == 0 {
+                return self.tally.max_stack(gi) >= group.min_stack;
+            }
+            let (best, second) = self.tally.top_two(gi);
+            best >= group.min_stack && second >= group.secondary_min_stack
+        })
     }
 
     /// Whether bringing `candidate` into `slot_group` still satisfies every
@@ -1047,10 +1105,13 @@ impl<'a> Builder<'a> {
                 return false;
             }
             if group.min_stack > 0 {
-                // The candidate's own key gains one; every other key keeps the
-                // count it has with the outgoing player already removed.
-                let with_candidate = self.tally.count_of(gi, key) + u32::from(key >= 0);
-                if self.tally.max_stack(gi).max(with_candidate) < group.min_stack {
+                // The tally already has the outgoing player removed; ask what
+                // the top counts would be with the candidate's key bumped by
+                // one, without mutating anything.
+                let (best, second) = self.tally.top_two_with(gi, key);
+                if best < group.min_stack
+                    || (group.secondary_min_stack > 0 && second < group.secondary_min_stack)
+                {
                     return false;
                 }
             }
@@ -1551,6 +1612,16 @@ mod tests {
                     counts.values().copied().max(),
                     group.min_stack
                 );
+                if group.secondary_min_stack > 0 {
+                    let mut sizes: Vec<u32> = counts.values().copied().collect();
+                    sizes.sort_unstable_by(|a, b| b.cmp(a));
+                    assert!(
+                        sizes.get(1).copied().unwrap_or(0) >= group.secondary_min_stack,
+                        "second-biggest stack is {:?}, needed {}: {lineup:?}",
+                        sizes.get(1),
+                        group.secondary_min_stack
+                    );
+                }
             }
         }
     }
@@ -2325,6 +2396,92 @@ mod tests {
                 min_stack: 4,
                 max_count: 3
             }))
+        );
+    }
+
+    #[test]
+    fn a_stack_pair_is_met_by_every_lineup() {
+        // 2-2 on a four-slot roster: some team supplies two players and a
+        // *different* team supplies two more. assert_all_valid checks the
+        // top-two counts of every lineup.
+        let pool = make_pool();
+        let spec = min_spec(team_ids(16), GroupConstraint::stack_pair(0, 2, 2, 0b111));
+        let lineups = build_lineups(&pool.view(), &spec, &config(30)).unwrap();
+        assert!(!lineups.is_empty());
+        assert_all_valid(&lineups, &pool.view(), &spec);
+    }
+
+    #[test]
+    fn a_stack_pair_actually_binds() {
+        // The same build without the secondary produces at least one lineup the
+        // pair constraint would reject — otherwise the test above proves nothing.
+        let pool = make_pool();
+        let spec = min_spec(team_ids(16), GroupConstraint::stack(0, 2, 0b111));
+        let lineups = build_lineups(&pool.view(), &spec, &config(30)).unwrap();
+        let violates = lineups.iter().any(|lineup| {
+            let mut counts = std::collections::HashMap::new();
+            for &p in lineup {
+                *counts.entry(team_ids(16)[p as usize]).or_insert(0u32) += 1;
+            }
+            let mut sizes: Vec<u32> = counts.values().copied().collect();
+            sizes.sort_unstable_by(|a, b| b.cmp(a));
+            sizes.get(1).copied().unwrap_or(0) < 2
+        });
+        assert!(
+            violates,
+            "every lineup was already a 2-2; the pair never binds"
+        );
+    }
+
+    #[test]
+    fn a_secondary_above_its_primary_is_rejected() {
+        let pool = make_pool();
+        let spec = min_spec(team_ids(16), GroupConstraint::stack_pair(0, 2, 3, 0b111));
+        assert_eq!(
+            build_lineups(&pool.view(), &spec, &config(10)),
+            Err(BuildError::Spec(SpecError::SecondaryStackShape {
+                group: 0,
+                min_stack: 2,
+                secondary: 3
+            }))
+        );
+    }
+
+    #[test]
+    fn a_stack_pair_beyond_the_counted_slots_is_rejected() {
+        let pool = make_pool();
+        let spec = min_spec(team_ids(16), GroupConstraint::stack_pair(0, 3, 2, 0b111));
+        assert_eq!(
+            build_lineups(&pool.view(), &spec, &config(10)),
+            Err(BuildError::Spec(SpecError::StackPairExceedsSlots {
+                group: 0,
+                min_stack: 3,
+                secondary: 2,
+                slots: 4
+            }))
+        );
+    }
+
+    #[test]
+    fn a_stack_pair_one_team_cannot_supply_returns_nothing() {
+        // Every player on one team: the primary is trivially satisfiable and
+        // the secondary can never be, which the capability scan must catch
+        // before the attempt budget is burned proving it.
+        let pool = make_pool();
+        let spec = min_spec(vec![0; 16], GroupConstraint::stack_pair(0, 2, 2, 0b111));
+        let lineups = build_lineups(&pool.view(), &spec, &config(10)).unwrap();
+        assert!(lineups.is_empty());
+    }
+
+    #[test]
+    fn a_stack_pair_is_deterministic() {
+        // The secondary target is drawn from the same generator as everything
+        // else, so the output must still be a function of the seed alone.
+        let pool = make_pool();
+        let spec = min_spec(team_ids(16), GroupConstraint::stack_pair(0, 2, 2, 0b111));
+        assert_eq!(
+            build_lineups(&pool.view(), &spec, &config(30)).unwrap(),
+            build_lineups(&pool.view(), &spec, &config(30)).unwrap()
         );
     }
 

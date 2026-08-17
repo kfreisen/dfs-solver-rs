@@ -69,6 +69,7 @@ fn build_lineups<'py>(
     group_max_counts: PyReadonlyArray1<'py, u32>,
     group_min_distincts: PyReadonlyArray1<'py, u32>,
     group_min_stacks: PyReadonlyArray1<'py, u32>,
+    group_secondary_min_stacks: PyReadonlyArray1<'py, u32>,
     group_slot_masks: PyReadonlyArray1<'py, u64>,
     key_columns: PyReadonlyArray1<'py, i32>,
     conflict_left: PyReadonlyArray1<'py, u32>,
@@ -108,6 +109,10 @@ fn build_lineups<'py>(
             group_max_counts: contiguous(&group_max_counts, "group_max_counts")?,
             group_min_distincts: contiguous(&group_min_distincts, "group_min_distincts")?,
             group_min_stacks: contiguous(&group_min_stacks, "group_min_stacks")?,
+            group_secondary_min_stacks: contiguous(
+                &group_secondary_min_stacks,
+                "group_secondary_min_stacks",
+            )?,
             group_slot_masks: contiguous(&group_slot_masks, "group_slot_masks")?,
             key_columns: contiguous(&key_columns, "key_columns")?,
             conflict_left: contiguous(&conflict_left, "conflict_left")?,

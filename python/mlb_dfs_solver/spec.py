@@ -166,7 +166,7 @@ UNCAPPED = 2**32 - 1
 class GroupConstraint:
     """What a set of selected players sharing a key must look like.
 
-    Three requirements, any combination of which may be set, all counted over the
+    Four requirements, any combination of which may be set, all counted over the
     same chosen slots:
 
     | Field | Reads as |
@@ -174,11 +174,13 @@ class GroupConstraint:
     | `max_count` | at most N players share one key value |
     | `min_distinct` | at least N *different* key values appear |
     | `min_stack` | at least one key value supplies N players |
+    | `secondary_min_stack` | a second, different key value supplies N more — the 4-2 |
 
     They are genuinely different shapes, not variations on a theme. A cap is about
-    one key value; `min_distinct` is about how many are used at all; `min_stack`
-    is existential — it asks that *some* value be well represented without saying
-    which, which is why the builder has to pick one before it can act.
+    one key value; `min_distinct` is about how many are used at all; the stacks
+    are existential — they ask that *some* value (or some pair of values) be well
+    represented without saying which, which is why the builder has to pick targets
+    before it can act.
 
     Attributes:
         key: Name of the per-player key this counts, e.g. `"team"`.
@@ -191,6 +193,11 @@ class GroupConstraint:
             Unlike the other two this is a strategy rather than an operator's
             rule; see the module docstring for how the builder chooses which value
             to stack, and why that choice is redrawn per attempt.
+        secondary_min_stack: How many players a *second, different* key value
+            must supply. `min_stack=4, secondary_min_stack=2` is the classic
+            "4-2": one team stacks four hitters and another stacks two. Requires
+            `min_stack`, and may not exceed it — the labels are primary and
+            secondary, not two interchangeable slots.
         slots: Slot names that count toward this constraint. `None` means every
             slot. Restricting this is how "at most 5 hitters from one team" is
             expressed without a special case, and equally how a stack is confined
@@ -201,6 +208,7 @@ class GroupConstraint:
     max_count: int | None = None
     min_distinct: int = 0
     min_stack: int = 0
+    secondary_min_stack: int = 0
     slots: tuple[str, ...] | None = None
 
     def __post_init__(self) -> None:
@@ -211,10 +219,22 @@ class GroupConstraint:
                 f"which forbids every lineup; exclude those players from the pool instead"
             )
             raise ValueError(msg)
-        for which, value in (("min_distinct", self.min_distinct), ("min_stack", self.min_stack)):
+        minimums = (
+            ("min_distinct", self.min_distinct),
+            ("min_stack", self.min_stack),
+            ("secondary_min_stack", self.secondary_min_stack),
+        )
+        for which, value in minimums:
             if value < 0:
                 msg = f"group constraint on {self.key!r} has negative {which} {value}"
                 raise ValueError(msg)
+        if self.secondary_min_stack and not self.min_stack:
+            msg = (
+                f"group constraint on {self.key!r} sets secondary_min_stack "
+                f"{self.secondary_min_stack} without min_stack; the secondary "
+                f"stack is defined relative to a primary one"
+            )
+            raise ValueError(msg)
         if self.max_count is None and not self.min_distinct and not self.min_stack:
             msg = (
                 f"group constraint on {self.key!r} sets no cap, no distinct minimum "
@@ -225,6 +245,13 @@ class GroupConstraint:
             msg = (
                 f"group constraint on {self.key!r} requires a stack of {self.min_stack} "
                 f"but caps the same key at {self.max_count}; those cannot both hold"
+            )
+            raise ValueError(msg)
+        if self.secondary_min_stack > self.min_stack > 0:
+            msg = (
+                f"group constraint on {self.key!r} has secondary_min_stack "
+                f"{self.secondary_min_stack} above min_stack {self.min_stack}; "
+                f"the primary stack is the larger one by definition — swap them"
             )
             raise ValueError(msg)
 
@@ -381,6 +408,16 @@ class RosterSpec:
                         f"satisfy it"
                     )
                     raise ValueError(msg)
+            # The two stacks occupy disjoint key values, so they need room for
+            # their sum, not for each alone.
+            if group.min_stack + group.secondary_min_stack > total:
+                msg = (
+                    f"group constraint on {group.key!r} requires stacks of "
+                    f"{group.min_stack} and {group.secondary_min_stack} from "
+                    f"different key values but counts only {total} roster "
+                    f"slot(s), so no lineup can satisfy both"
+                )
+                raise ValueError(msg)
         for group in self.groups:
             if group.slots is None:
                 continue

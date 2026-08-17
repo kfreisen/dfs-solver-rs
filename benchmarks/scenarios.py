@@ -21,6 +21,7 @@ the whole configuration rather than a toy.
 | `single-entry` | one lineup — the case a solver wins | 1 |
 | `cash` | a salary floor, few entries | 20 |
 | `stack` | a four-hitter team stack | 150 |
+| `stack-4-2` | a second team supplying two more hitters | 150 |
 | `conflict` | no hitters against the rostered pitcher | 150 |
 | `locks` | an ace and a value bat in every lineup | 150 |
 | `mme` | exposure caps on everyone else | 150 |
@@ -39,16 +40,13 @@ configuration with the preference off.
 
 ## What is not expressible
 
-A real mass-multi-entry player usually wants a **secondary stack** — a 4-2 or
-5-3 structure, where a second team supplies two or three more hitters. That
-cannot be stated here. `GroupConstraint(min_stack=...)` is existential over *one*
-key value: it asks that some team reach the size, and there is no way to ask that
-a *different* team also reach a second size. Nor is "every team used must supply
-at least two", which is the same gap from the other side.
-
-This is a real limitation on how faithfully these scenarios mimic MME, and it is
-recorded here rather than worked around, because working around it would mean
-generating with a stack and filtering afterwards — which measures a filter.
+"Every team used must supply at least two players" cannot be stated:
+`min_stack`/`secondary_min_stack` are existential over one and two key values,
+and there is no universal form. Recorded here rather than worked around, because
+working around it would mean generating and filtering — which measures a filter.
+(The 4-2 secondary stack itself *is* expressible —
+`GroupConstraint(min_stack=4, secondary_min_stack=2)` — and the `stack-4-2` rung
+measures it.)
 """
 
 from __future__ import annotations
@@ -199,6 +197,16 @@ def build_scenarios() -> list[Scenario]:
         floor,
         groups=(*floor.groups, GroupConstraint(key="team", min_stack=4, slots=HITTER_SLOTS)),
     )
+    # The 4-2: the same stack with a second team supplying two more hitters. A
+    # side rung rather than part of the cumulative chain, so the rungs after
+    # `stack` keep measuring one added thing each.
+    paired = replace(
+        floor,
+        groups=(
+            *floor.groups,
+            GroupConstraint(key="team", min_stack=4, secondary_min_stack=2, slots=HITTER_SLOTS),
+        ),
+    )
     conflicted = replace(
         stacked,
         conflicts=(
@@ -259,6 +267,16 @@ def build_scenarios() -> list[Scenario]:
             spec=stacked,
             entries=MME_ENTRIES,
             attempts=10,
+        ),
+        Scenario(
+            name="stack-4-2",
+            detail="+ a second team supplying 2 more hitters (4-2)",
+            pool=pool,
+            spec=paired,
+            entries=MME_ENTRIES,
+            # A pair fails more attempts than a single stack; the budget buys
+            # the yield back.
+            attempts=15,
         ),
         Scenario(
             name="conflict",
@@ -339,6 +357,7 @@ SCENARIO_NAMES: tuple[str, ...] = (
     "single-entry",
     "cash",
     "stack",
+    "stack-4-2",
     "conflict",
     "locks",
     "mme",

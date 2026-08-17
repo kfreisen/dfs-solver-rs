@@ -40,7 +40,7 @@ if TYPE_CHECKING:
 
     import numpy as np
     from mlb_dfs_solver.pool import PlayerPool
-    from mlb_dfs_solver.spec import RosterSpec
+    from mlb_dfs_solver.spec import GroupConstraint, RosterSpec
 
 
 @dataclass
@@ -77,6 +77,23 @@ class _Tally:
     def max_stack(self, group_index: int) -> int:
         """The largest number of players any one key value has contributed."""
         return max(self.counts[group_index].values(), default=0)
+
+    def top_two(self, group_index: int) -> tuple[int, int]:
+        """The two largest per-key counts, descending — what a 4-2 is judged on."""
+        return self.top_two_with(group_index, -1)
+
+    def top_two_with(self, group_index: int, extra_key: int) -> tuple[int, int]:
+        """`top_two` as it would read with one extra player of `extra_key`.
+
+        `-1` adds nobody. Mirrors `GroupTally::top_two_with` in the Rust core:
+        how salary repair asks "would this swap keep the stacks?" without
+        mutating the tally.
+        """
+        bucket = dict(self.counts[group_index])
+        if extra_key >= 0:
+            bucket[extra_key] = bucket.get(extra_key, 0) + 1
+        sizes = sorted(bucket.values(), reverse=True)
+        return (sizes[0] if sizes else 0, sizes[1] if len(sizes) > 1 else 0)
 
     def count_of(self, group_index: int, key: int) -> int:
         """How many players this constraint has counted for `key`."""
@@ -123,17 +140,23 @@ def _capable_keys(
     slot_masks: list[int],
     eligible: list[list[int]],
     keys: dict[str, Sequence[int]],
-) -> list[list[int]]:
+) -> tuple[list[list[int]], list[list[int]]]:
     """Key values each stack constraint could plausibly be built around.
 
     A team with two eligible outfielders cannot supply a five-stack, and drawing
     it as a target would waste the attempt. Bounded per slot group by both the
     slot count and how many of the key's players are eligible there.
+
+    Returns the primary list and the secondary list per group. The secondary bar
+    is never higher than the primary, so its list is a superset — which is what
+    the pair feasibility test relies on.
     """
     capable: list[list[int]] = []
+    secondary_capable: list[list[int]] = []
     for gi, group in enumerate(spec.groups):
         if not group.min_stack:
             capable.append([])
+            secondary_capable.append([])
             continue
         reach: dict[int, int] = {}
         for j, slot in enumerate(spec.slots):
@@ -147,7 +170,12 @@ def _capable_keys(
             for key, available in per_key.items():
                 reach[key] = reach.get(key, 0) + min(available, slot.count)
         capable.append(sorted(k for k, r in reach.items() if r >= group.min_stack))
-    return capable
+        secondary_capable.append(
+            sorted(k for k, r in reach.items() if r >= group.secondary_min_stack)
+            if group.secondary_min_stack
+            else []
+        )
+    return capable, secondary_capable
 
 
 def build_lineups_reference(
@@ -302,10 +330,16 @@ def build_lineups_reference(
         suffix_cost[j] = suffix_cost[j + 1] + locked_cost[j] + cheapest[j][take]
 
     counted_suffix = _counted_suffix(spec, slot_masks)
-    capable = _capable_keys(spec, slot_masks, eligible, keys)
+    capable, secondary_capable = _capable_keys(spec, slot_masks, eligible, keys)
     # A stack nobody can supply makes every lineup impossible; say so once
-    # rather than discovering it attempt by attempt.
-    if any(g.min_stack and not capable[gi] for gi, g in enumerate(spec.groups)):
+    # rather than discovering it attempt by attempt. A 4-2 needs a *pair* of
+    # distinct keys, and the secondary list being a superset makes that exactly
+    # "at least two keys reach the secondary bar".
+    if any(
+        g.min_stack
+        and (not capable[gi] or (g.secondary_min_stack and len(secondary_capable[gi]) < 2))
+        for gi, g in enumerate(spec.groups)
+    ):
         return []
 
     rng = random.Random(seed)
@@ -327,6 +361,14 @@ def build_lineups_reference(
         # same way every time would stack the whole portfolio on one team.
         stack_targets = [
             rng.choice(capable[gi]) if g.min_stack else -1 for gi, g in enumerate(spec.groups)
+        ]
+        # The secondary target is a *different* key, drawn right after its
+        # primary, mirroring the kernel's draw order.
+        secondary_targets = [
+            rng.choice([k for k in secondary_capable[gi] if k != stack_targets[gi]])
+            if g.secondary_min_stack
+            else -1
+            for gi, g in enumerate(spec.groups)
         ]
 
         (ceiling_low, ceiling_high), (leverage_low, leverage_high) = profiles[
@@ -357,6 +399,7 @@ def build_lineups_reference(
             locked_by_slot,
             counted_suffix,
             stack_targets,
+            secondary_targets,
         )
         if filled is None:
             continue
@@ -400,6 +443,7 @@ def _fill(
     locked_by_slot: list[list[int]],
     counted_suffix: list[list[int]],
     stack_targets: list[int],
+    secondary_targets: list[int],
 ) -> tuple[list[int], int] | None:
     """Greedily fill every slot; return None if a slot cannot be filled.
 
@@ -465,7 +509,9 @@ def _fill(
                     break
                 if used[player]:
                     continue
-                if stack_pass and not _feeds_a_stack(spec, tally, stack_targets, player, group_idx):
+                if stack_pass and not _feeds_a_stack(
+                    spec, tally, stack_targets, secondary_targets, player, group_idx
+                ):
                     continue
                 # Reserve enough for the slots still to be filled, including the
                 # rest of this group.
@@ -493,29 +539,45 @@ def _fill(
 
     # Distinct minimums are guaranteed by construction — no pick that would make
     # one unreachable is ever taken. A stack is not: the drawn key may simply not
-    # have had enough affordable players in the slots that were left.
+    # have had enough affordable players in the slots that were left. A pair is
+    # judged on the two largest stacks actually present, not the drawn targets.
     if has_stacks and not all(
-        tally.max_stack(gi) >= g.min_stack for gi, g in enumerate(spec.groups) if g.min_stack
+        _stack_holds(tally, gi, g) for gi, g in enumerate(spec.groups) if g.min_stack
     ):
         return None
     return lineup, salary
+
+
+def _stack_holds(tally: _Tally, group_index: int, group: GroupConstraint) -> bool:
+    """Whether one group's stack requirement — single or 4-2 pair — is met."""
+    if not group.secondary_min_stack:
+        return tally.max_stack(group_index) >= group.min_stack
+    best, second = tally.top_two(group_index)
+    return best >= group.min_stack and second >= group.secondary_min_stack
 
 
 def _feeds_a_stack(
     spec: RosterSpec,
     tally: _Tally,
     stack_targets: list[int],
+    secondary_targets: list[int],
     player: int,
     slot_group: int,
 ) -> bool:
-    """Whether a stack still owed players wants this one."""
+    """Whether a stack still owed players wants this one — either target."""
     for gi, group in enumerate(spec.groups):
         if not group.min_stack or not tally.counts_slot(gi, slot_group):
             continue
+        key = tally.key_of(gi, player)
         target = stack_targets[gi]
-        if target < 0 or tally.key_of(gi, player) != target:
-            continue
-        if tally.count_of(gi, target) < group.min_stack:
+        if target >= 0 and key == target and tally.count_of(gi, target) < group.min_stack:
+            return True
+        secondary = secondary_targets[gi]
+        if (
+            secondary >= 0
+            and key == secondary
+            and tally.count_of(gi, secondary) < group.secondary_min_stack
+        ):
             return True
     return False
 
@@ -651,8 +713,12 @@ def _swap_keeps_minimums(spec: RosterSpec, tally: _Tally, candidate: int, slot_g
         if tally.distinct_count(gi) + gain < group.min_distinct:
             return False
         if group.min_stack:
-            with_candidate = tally.count_of(gi, key) + (1 if key >= 0 else 0)
-            if max(tally.max_stack(gi), with_candidate) < group.min_stack:
+            # The tally already has the outgoing player removed; ask what the
+            # top counts would be with the candidate's key bumped by one.
+            best, second = tally.top_two_with(gi, key)
+            if best < group.min_stack:
+                return False
+            if group.secondary_min_stack and second < group.secondary_min_stack:
                 return False
     return True
 
@@ -718,6 +784,10 @@ def is_valid(
             return False
         if group.min_stack and max(counts.values(), default=0) < group.min_stack:
             return False
+        if group.secondary_min_stack:
+            sizes = sorted(counts.values(), reverse=True)
+            if len(sizes) < 2 or sizes[1] < group.secondary_min_stack:
+                return False
 
     return True
 

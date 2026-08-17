@@ -584,6 +584,15 @@ def biggest_stack(pool: PlayerPool, lineup: list[int]) -> int:
     return max(counts.values(), default=0)
 
 
+def top_two_stacks(pool: PlayerPool, lineup: list[int]) -> tuple[int, int]:
+    counts: dict[int, int] = {}
+    for p in lineup:
+        key = int(pool.keys["team"][p])
+        counts[key] = counts.get(key, 0) + 1
+    sizes = sorted(counts.values(), reverse=True)
+    return (sizes[0] if sizes else 0, sizes[1] if len(sizes) > 1 else 0)
+
+
 def test_a_distinct_minimum_is_met_by_every_lineup(
     tiny_pool: PlayerPool, tiny_spec: RosterSpec
 ) -> None:
@@ -665,6 +674,59 @@ def test_a_stack_the_pool_cannot_supply_returns_nothing(tiny_spec: RosterSpec) -
     pool = PlayerPool.from_records(records, tiny_spec)
     spec = replace(tiny_spec, groups=(GroupConstraint(key="team", min_stack=2),))
     assert len(build_lineups(pool, spec, num_lineups=20, seed=43)) == 0
+
+
+def test_a_stack_pair_is_met_by_every_lineup(tiny_pool: PlayerPool, tiny_spec: RosterSpec) -> None:
+    # The 4-2 shape, at tiny scale: some team supplies two players and a
+    # *different* team supplies two more.
+    spec = replace(
+        tiny_spec, groups=(GroupConstraint(key="team", min_stack=2, secondary_min_stack=2),)
+    )
+    lineups = build_lineups(tiny_pool, spec, num_lineups=40, seed=46)
+    assert len(lineups) > 0
+    for lineup in lineups.tolist():
+        best, second = top_two_stacks(tiny_pool, lineup)
+        assert best >= 2, lineup
+        assert second >= 2, lineup
+
+
+def test_a_stack_pair_actually_binds(tiny_pool: PlayerPool, tiny_spec: RosterSpec) -> None:
+    # The same build with only the primary produces at least one lineup the
+    # pair would reject — otherwise the test above proves nothing.
+    spec = replace(tiny_spec, groups=(GroupConstraint(key="team", min_stack=2),))
+    lineups = build_lineups(tiny_pool, spec, num_lineups=40, seed=46)
+    assert any(top_two_stacks(tiny_pool, lineup)[1] < 2 for lineup in lineups.tolist())
+
+
+def test_a_stack_pair_one_team_cannot_supply_returns_nothing(tiny_spec: RosterSpec) -> None:
+    # Every player on one team: the primary is trivially satisfiable, the
+    # secondary never is.
+    records = [{**r, "team": "ONE"} for r in make_records()]
+    pool = PlayerPool.from_records(records, tiny_spec)
+    spec = replace(
+        tiny_spec, groups=(GroupConstraint(key="team", min_stack=2, secondary_min_stack=2),)
+    )
+    assert len(build_lineups(pool, spec, num_lineups=20, seed=47)) == 0
+
+
+def test_a_secondary_above_the_primary_is_rejected() -> None:
+    with pytest.raises(ValueError, match="swap them"):
+        GroupConstraint(key="team", min_stack=2, secondary_min_stack=3)
+
+
+def test_a_secondary_without_a_primary_is_rejected() -> None:
+    with pytest.raises(ValueError, match="relative to a primary"):
+        GroupConstraint(key="team", secondary_min_stack=2)
+
+
+def test_a_stack_pair_beyond_the_roster_is_rejected(
+    tiny_pool: PlayerPool, tiny_spec: RosterSpec
+) -> None:
+    # 3 + 2 from different teams needs five of a four-player roster.
+    with pytest.raises(ValueError, match="satisfy both"):
+        replace(
+            tiny_spec, groups=(GroupConstraint(key="team", min_stack=3, secondary_min_stack=2),)
+        )
 
 
 def test_a_stack_and_a_cap_coexist(tiny_pool: PlayerPool, tiny_spec: RosterSpec) -> None:

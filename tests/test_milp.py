@@ -8,12 +8,13 @@ many players any two share.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from itertools import combinations
 
 import pytest
-from baselines.milp import solve_portfolio_ortools
+from baselines.milp import solve_milp_ortools, solve_portfolio_ortools
 from mlb_dfs_solver.pool import PlayerPool
-from mlb_dfs_solver.spec import RosterSpec
+from mlb_dfs_solver.spec import GroupConstraint, RosterSpec
 
 pytest.importorskip("ortools")
 
@@ -33,6 +34,23 @@ def test_max_shared_bounds_every_pair(tiny_pool: PlayerPool, tiny_spec: RosterSp
     assert len(found) >= 2, "need at least a pair to test the bound"
     for a, b in combinations(found, 2):
         assert len(set(a) & set(b)) <= limit
+
+
+def test_the_solver_honors_a_stack_pair(tiny_pool: PlayerPool, tiny_spec: RosterSpec) -> None:
+    # Two distinct teams must supply two players each — the 4-2 shape the
+    # kernel builds, formulated as two indicator families forced apart.
+    spec = replace(
+        tiny_spec, groups=(GroupConstraint(key="team", min_stack=2, secondary_min_stack=2),)
+    )
+    lineup = solve_milp_ortools(tiny_pool, spec)
+    assert lineup is not None
+    counts: dict[int, int] = {}
+    for p in lineup:
+        key = int(tiny_pool.keys["team"][p])
+        counts[key] = counts.get(key, 0) + 1
+    sizes = sorted(counts.values(), reverse=True)
+    assert sizes[0] >= 2, lineup
+    assert sizes[1] >= 2, lineup
 
 
 def test_max_shared_binds_where_cuts_do_not(tiny_pool: PlayerPool, tiny_spec: RosterSpec) -> None:

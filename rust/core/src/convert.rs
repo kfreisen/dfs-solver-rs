@@ -128,6 +128,8 @@ pub struct SpecArrays<'a> {
     pub group_min_distincts: &'a [u32],
     /// How many players one key value must supply for each constraint; 0 none.
     pub group_min_stacks: &'a [u32],
+    /// How many players a *second, distinct* key value must supply; 0 none.
+    pub group_secondary_min_stacks: &'a [u32],
     /// Which slot groups each constraint counts.
     pub group_slot_masks: &'a [u64],
     /// Flattened `(n_columns, n_players)` key matrix.
@@ -171,6 +173,7 @@ pub fn spec_from_arrays(
         || arrays.group_slot_masks.len() != n_groups
         || arrays.group_min_distincts.len() != n_groups
         || arrays.group_min_stacks.len() != n_groups
+        || arrays.group_secondary_min_stacks.len() != n_groups
     {
         return Err(ConvertError::GroupArrayMismatch {
             key_columns: arrays.group_key_columns.len(),
@@ -207,6 +210,7 @@ pub fn spec_from_arrays(
                 max_count: arrays.group_max_counts[i],
                 min_distinct: arrays.group_min_distincts[i],
                 min_stack: arrays.group_min_stacks[i],
+                secondary_min_stack: arrays.group_secondary_min_stacks[i],
                 slots: arrays.group_slot_masks[i],
             })
             .collect(),
@@ -327,6 +331,7 @@ mod tests {
             group_max_counts: &[6, 5],
             group_min_distincts: &[0, 0],
             group_min_stacks: &[0, 0],
+            group_secondary_min_stacks: &[0, 0],
             group_slot_masks: &[0b111, 0b011],
             key_columns,
             conflict_left: &[],

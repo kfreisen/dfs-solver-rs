@@ -220,6 +220,14 @@ pub struct GroupConstraint {
     /// is asked to do, and expressing it any other way means post-filtering a
     /// pool that was never built to contain it.
     pub min_stack: u32,
+    /// How many players a *second, distinct* key value must contribute.
+    ///
+    /// `min_stack: 4, secondary_min_stack: 2` is the classic "4-2": one team
+    /// stacks four hitters and a different team stacks two. Zero imposes
+    /// nothing. Never larger than [`Self::min_stack`] — the primary is the
+    /// larger stack by definition, which is what keeps the top-two test in
+    /// `GroupTally::top_two` unambiguous.
+    pub secondary_min_stack: u32,
     /// Which slot groups count toward this constraint, as a bitmask over
     /// slot-group index.
     pub slots: SlotMask,
@@ -236,6 +244,7 @@ impl GroupConstraint {
             max_count,
             min_distinct: 0,
             min_stack: 0,
+            secondary_min_stack: 0,
             slots,
         }
     }
@@ -247,6 +256,7 @@ impl GroupConstraint {
             max_count: UNCAPPED,
             min_distinct,
             min_stack: 0,
+            secondary_min_stack: 0,
             slots,
         }
     }
@@ -258,6 +268,25 @@ impl GroupConstraint {
             max_count: UNCAPPED,
             min_distinct: 0,
             min_stack,
+            secondary_min_stack: 0,
+            slots,
+        }
+    }
+
+    /// A "4-2": one key value contributes `min_stack` players and a *different*
+    /// one contributes `secondary_min_stack`.
+    pub fn stack_pair(
+        key_column: usize,
+        min_stack: u32,
+        secondary_min_stack: u32,
+        slots: SlotMask,
+    ) -> Self {
+        Self {
+            key_column,
+            max_count: UNCAPPED,
+            min_distinct: 0,
+            min_stack,
+            secondary_min_stack,
             slots,
         }
     }
@@ -328,6 +357,19 @@ pub enum SpecError {
         group: usize,
         min_stack: u32,
         max_count: u32,
+    },
+    /// A secondary stack without a primary, or larger than the primary.
+    SecondaryStackShape {
+        group: usize,
+        min_stack: u32,
+        secondary: u32,
+    },
+    /// The two stacks together need more players than the counted slots hold.
+    StackPairExceedsSlots {
+        group: usize,
+        min_stack: u32,
+        secondary: u32,
+        slots: usize,
     },
     BadMultiplier {
         slot: usize,
@@ -400,6 +442,27 @@ impl std::fmt::Display for SpecError {
                 f,
                 "group constraint {group} requires a stack of {min_stack} but caps the \
                  same key at {max_count}; those cannot both hold"
+            ),
+            Self::SecondaryStackShape {
+                group,
+                min_stack,
+                secondary,
+            } => write!(
+                f,
+                "group constraint {group} has secondary_min_stack {secondary} against \
+                 min_stack {min_stack}; the secondary needs a primary and may not \
+                 exceed it"
+            ),
+            Self::StackPairExceedsSlots {
+                group,
+                min_stack,
+                secondary,
+                slots,
+            } => write!(
+                f,
+                "group constraint {group} requires stacks of {min_stack} and {secondary} \
+                 from different key values but counts only {slots} roster slot(s), so no \
+                 lineup can satisfy both"
             ),
             Self::BadMultiplier { slot, which, value } => write!(
                 f,
@@ -518,6 +581,25 @@ impl RosterSpec {
                     group: i,
                     min_stack: group.min_stack,
                     max_count: group.max_count,
+                });
+            }
+            if group.secondary_min_stack > 0
+                && (group.min_stack == 0 || group.secondary_min_stack > group.min_stack)
+            {
+                return Err(SpecError::SecondaryStackShape {
+                    group: i,
+                    min_stack: group.min_stack,
+                    secondary: group.secondary_min_stack,
+                });
+            }
+            // The two stacks occupy disjoint key values, so they need room for
+            // their sum, not for each alone.
+            if (group.min_stack + group.secondary_min_stack) as usize > counted {
+                return Err(SpecError::StackPairExceedsSlots {
+                    group: i,
+                    min_stack: group.min_stack,
+                    secondary: group.secondary_min_stack,
+                    slots: counted,
                 });
             }
         }
@@ -669,6 +751,34 @@ impl<'a> GroupTally<'a> {
             .copied()
             .max()
             .unwrap_or(0)
+    }
+
+    /// The two largest per-key counts for constraint `group_index`, descending.
+    ///
+    /// What a secondary stack is judged against: a 4-2 holds when the top count
+    /// reaches the primary minimum and the *second* count — necessarily a
+    /// different key — reaches the secondary. Same single scan as
+    /// [`Self::max_stack`], with two accumulators.
+    pub fn top_two(&self, group_index: usize) -> (u32, u32) {
+        self.top_two_with(group_index, -1)
+    }
+
+    /// [`Self::top_two`] as it would read with one extra player of `extra_key`
+    /// counted. `-1` adds nobody. This is how salary repair asks "would this
+    /// swap keep the stacks?" without mutating the tally.
+    pub fn top_two_with(&self, group_index: usize, extra_key: i32) -> (u32, u32) {
+        let start = group_index * self.n_keys;
+        let (mut best, mut second) = (0u32, 0u32);
+        for (key, &count) in self.counts[start..start + self.n_keys].iter().enumerate() {
+            let count = count + u32::from(extra_key == key as i32);
+            if count > best {
+                second = best;
+                best = count;
+            } else if count > second {
+                second = count;
+            }
+        }
+        (best, second)
     }
 
     /// The key value `player` carries for constraint `group_index`, or `-1` if
@@ -871,6 +981,23 @@ mod tests {
         tally.add(5, 6);
         // Now the total cap of 6 is reached, so nothing else from team 0 fits.
         assert!(tally.would_exceed(0, 6));
+    }
+
+    #[test]
+    fn top_two_reports_the_two_biggest_stacks() {
+        // Teams 0, 0, 0, 1, 1, 2 across the first six players.
+        let spec = dk_mlb(vec![0, 0, 0, 1, 1, 2]);
+        let mut tally = GroupTally::new(&spec);
+        for i in 0..6 {
+            tally.add(i, 0);
+        }
+        assert_eq!(tally.top_two(0), (3, 2));
+        // A virtual extra player of team 2 lifts it to 2, tying second place.
+        assert_eq!(tally.top_two_with(0, 2), (3, 2));
+        // Of team 1, it takes the lead outright.
+        assert_eq!(tally.top_two_with(0, 1), (3, 3));
+        // Of nobody, nothing changes.
+        assert_eq!(tally.top_two_with(0, -1), (3, 2));
     }
 
     #[test]

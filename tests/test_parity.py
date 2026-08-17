@@ -425,6 +425,21 @@ def test_both_meet_the_same_stack_minimum(tiny_pool: PlayerPool, tiny_spec: Rost
         assert is_valid(lineup, tiny_pool, spec), lineup
 
 
+def test_both_meet_the_same_stack_pair(tiny_pool: PlayerPool, tiny_spec: RosterSpec) -> None:
+    from dataclasses import replace
+
+    spec = replace(
+        tiny_spec, groups=(GroupConstraint(key="team", min_stack=2, secondary_min_stack=2),)
+    )
+    kernel = build_lineups(tiny_pool, spec, num_lineups=40, seed=54)
+    reference = build_lineups_reference(tiny_pool, spec, num_lineups=40, seed=54)
+    assert len(kernel) > 0
+    assert reference
+    assert validity_report(kernel, tiny_pool, spec) == ""
+    for lineup in reference:
+        assert is_valid(lineup, tiny_pool, spec), lineup
+
+
 def test_both_spread_their_stacks(tiny_pool: PlayerPool, tiny_spec: RosterSpec) -> None:
     """Neither may answer "which team?" the same way every attempt.
 

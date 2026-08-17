@@ -108,7 +108,7 @@ of median projection), and `mode="gpp"`.
 | Spread wider / tighter | `dataclasses.replace(r, diversity_weight=...)` — `1.0` spreads further at ~3% median projection cost, `0.0` turns it off |
 | Hard ceiling on named players | `replace(r, max_exposure=...)` — applied at selection, where a cap skips candidates instead of discarding lineups. See [exposure caps](concepts.md#exposure-caps) |
 | Always roster someone | `recipes.gpp(spec, seed=1, locks=[...])` — see [locks and exposure](#locks-and-exposure) |
-| A 4-2 secondary stack | Not expressible — `min_stack` is existential over one team. Recorded in `benchmarks/scenarios.py` rather than worked around |
+| A 4-2 secondary stack | `GroupConstraint(key="team", min_stack=4, secondary_min_stack=2, slots=HITTERS)` — a second, distinct team supplies two more. Costs more failed attempts; the `stack-4-2` benchmark rung measures it |
 | Chalkier / more contrarian | Your own `profiles=` on `build_lineups` — the `leverage` range fades ownership, and a negative exponent inverts the fade |
 
 ## Contest scale — the candidate pool
