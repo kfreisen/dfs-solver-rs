@@ -299,9 +299,14 @@ def render_headline() -> str:
         by_impl = {case["impl"]: case for case in timed}
         ours = by_impl.get("mlb_dfs_solver_rust")
         solver = by_impl.get("milp_ortools_cpsat")
+        overlap_solver = by_impl.get("milp_ortools_cpsat_overlap")
         if not (ours and solver):
             continue
 
+        rows = [("This package", ours), ("Solver + no-good cuts", solver)]
+        if overlap_solver:
+            shared = overlap_solver["params"].get("max_shared", "k")
+            rows.append((f"Solver + max {shared}/10 shared", overlap_solver))
         hw = result["hardware"]
         lines = [
             f"*The `mme` scenario: {ours.get('detail', '')}. "
@@ -311,7 +316,7 @@ def render_headline() -> str:
             "| | Time | Players used | Projection, min → max | Top player's share |",
             "| --- | ---: | ---: | ---: | ---: |",
         ]
-        for label, case in (("This package", ours), ("Solver + no-good cuts", solver)):
+        for label, case in rows:
             q = case["quality"]
             lines.append(
                 f"| {label} | {duration(case['median'])} | "

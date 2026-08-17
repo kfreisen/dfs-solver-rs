@@ -57,6 +57,10 @@ SCHEMA = 2
 # Per solve. Generous enough that nothing here hits it; present so one pathological
 # instance cannot stall a run for hours.
 SOLVER_LIMIT_S = 30.0
+# Whole-portfolio budget for the overlap-constrained solver row, which costs far
+# more per solve than no-good cuts. An hour is enough for the 150-entry rows and
+# still an upper bound worth having.
+OVERLAP_BUDGET_S = 3600.0
 # The pure-Python oracle is ~15x slower than the kernel and proves the same
 # output; past this many entries it adds wall clock and no information.
 REFERENCE_MAX_ENTRIES = 150
@@ -210,6 +214,29 @@ def measure_scenario(scenario: Scenario, *, with_solver: bool, with_reference: b
                 # Recorded so the report can say "N lineups is what the budget
                 # bought" instead of presenting a truncated run as a completed one.
                 cases[-1]["params"]["budget_s"] = scenario.solver_budget_s
+        print(f" {seconds:9.2f} s   ({len(lineups)}/{scenario.entries})")
+
+    if with_solver and scenario.solver and scenario.solver_max_shared:
+        # The fair diversity formulation, far slower per solve. Budgeted so a
+        # pathological slate cannot stall the whole run.
+        overlap_kwargs = {**scenario.solver_kwargs, "budget_s": OVERLAP_BUDGET_S}
+        print(
+            f"  {scenario.name:14s} cp-sat ov{scenario.solver_max_shared} ...", end="", flush=True
+        )
+        seconds, found = measure(
+            solve_portfolio_ortools,
+            pool,
+            spec,
+            time_limit_s=SOLVER_LIMIT_S,
+            max_shared=scenario.solver_max_shared,
+            **overlap_kwargs,
+        )
+        lineups = np.array(found)
+        if len(lineups):
+            record("milp_ortools_cpsat_overlap", seconds, lineups)
+            cases[-1]["params"]["max_shared"] = scenario.solver_max_shared
+            if len(lineups) < scenario.entries:
+                cases[-1]["params"]["budget_s"] = OVERLAP_BUDGET_S
         print(f" {seconds:9.2f} s   ({len(lineups)}/{scenario.entries})")
 
     return cases

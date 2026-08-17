@@ -14,13 +14,16 @@ without judging it: whether a tight, high-projection set beats a wide one depend
 on the contest and on the projections, and nothing in this repository can settle
 that.
 
-**A caveat on this baseline.** `_portfolio` below gets diversity from no-good cuts
-alone. The other standard technique is an overlap constraint — bounding how many
-players a new lineup may share with each one already found — which produces a
-visibly wider set at 150 entries and costs substantially more per solve. It is not
-implemented here, so read the 150-entry comparison as against the cheapest way to
-get N lineups from a solver, not the best one. The contest-scale table does not
-depend on the distinction: at 10,000 lineups both are out of reach.
+**Two diversity formulations, both benchmarked.** `_portfolio` gets diversity
+from no-good cuts by default — the cheapest way to get N distinct lineups, and
+the way they come out as the top N by projection. `max_shared` switches every
+cut to an overlap constraint — bounding how many players a new lineup may share
+with each one already found — which produces a genuinely wide set at a much
+higher per-solve cost. The published `mme` comparison carries both rows, because
+comparing only against the cheap formulation would understate what a solver can
+do, and comparing only against the expensive one would understate its speed. The
+contest-scale table does not depend on the distinction: at 10,000 lineups both
+are out of reach.
 
 Speed is the smaller part of the story, and per-lineup solver cost is extremely
 sensitive to slate degeneracy — tied `(salary, projection)` pairs send
@@ -111,6 +114,7 @@ def solve_milp_ortools(
     locks: Sequence[int] | None = None,
     conflict_pairs: Sequence[tuple[int, int]] | None = None,
     time_limit_s: float = 30.0,
+    max_shared: int | None = None,
 ) -> list[int] | None:
     """Return the highest-projection valid lineup, or None if infeasible.
 
@@ -133,6 +137,12 @@ def solve_milp_ortools(
         conflict_pairs: Pool-index pairs that may not appear together, on top of
             whatever `spec.conflicts` resolves to.
         time_limit_s: Wall-clock limit handed to CP-SAT.
+        max_shared: When set, each `excluded` set becomes an overlap constraint
+            — at most this many of its players may appear — instead of a no-good
+            cut. This is the *fair* diversity formulation: no-good cuts are the
+            cheapest way to get N distinct lineups from a solver, overlap
+            constraints are how a solver is made to produce a genuinely wide
+            set, at a much higher per-solve cost.
 
     Returns:
         Pool indices in slot order, or None if no valid lineup exists.
@@ -216,7 +226,8 @@ def solve_milp_ortools(
     for forbidden in excluded or []:
         members = [assign[i, gi] for gi in groups for i in eligible[gi] if i in forbidden]
         if members:
-            model.add(sum(members) <= len(forbidden) - 1)
+            limit = max_shared if max_shared is not None else len(forbidden) - 1
+            model.add(sum(members) <= limit)
 
     # CP-SAT is integral, so projections are scaled rather than rounded away.
     model.maximize(
@@ -248,6 +259,7 @@ def _portfolio(
     max_exposure: float | Mapping[int, float] | None,
     time_limit_s: float,
     budget_s: float | None,
+    max_shared: int | None,
 ) -> list[list[int]]:
     """Re-solve with no-good cuts until `num_lineups` distinct lineups exist.
 
@@ -292,6 +304,7 @@ def _portfolio(
             locks=locks,
             conflict_pairs=conflict_pairs,
             time_limit_s=time_limit_s,
+            max_shared=max_shared,
         )
         if lineup is None:
             break
@@ -312,10 +325,19 @@ def solve_portfolio_ortools(
     max_exposure: float | Mapping[int, float] | None = None,
     time_limit_s: float = 30.0,
     budget_s: float | None = None,
+    max_shared: int | None = None,
 ) -> list[list[int]]:
-    """Produce `num_lineups` distinct lineups with CP-SAT and no-good cuts.
+    """Produce `num_lineups` distinct lineups with CP-SAT.
 
     This is the apples-to-apples comparison against `mlb_dfs_solver.build_lineups`.
+
+    Diversity comes from no-good cuts by default — the cheapest way to get N
+    distinct lineups from a solver, and the way its entries end up as the top N
+    by projection, differing by a player or two. Pass `max_shared` to switch
+    every cut to an overlap constraint (a new lineup may share at most that
+    many players with each one already found), which is the fair formulation: a
+    solver *can* produce a genuinely wide set this way, at a much higher
+    per-solve cost. Both are benchmarked; the comparison should show both.
 
     Per-lineup cost is extremely sensitive to the slate rather than to its size.
     On a slate with many tied `(salary, projection)` pairs a solver can run
@@ -337,4 +359,5 @@ def solve_portfolio_ortools(
         max_exposure=max_exposure,
         time_limit_s=time_limit_s,
         budget_s=budget_s,
+        max_shared=max_shared,
     )

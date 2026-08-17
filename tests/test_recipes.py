@@ -148,9 +148,7 @@ def test_a_locked_and_capped_recipe_exempts_the_locks_from_the_cap(
 ) -> None:
     # A locked player is in every candidate; a blanket selection cap would stop
     # the whole portfolio at the cap. The recipe caps everyone else instead.
-    r = dataclasses.replace(
-        recipes.gpp(tiny_spec, seed=3, entries=30, locks=[0]), max_exposure=0.5
-    )
+    r = dataclasses.replace(recipes.gpp(tiny_spec, seed=3, entries=30, locks=[0]), max_exposure=0.5)
     lineups = r.build(tiny_pool)
     assert (lineups == 0).any(axis=1).all(), "lock must be in every candidate"
     sim = score_lineups(tiny_pool, tiny_spec, lineups, universe)

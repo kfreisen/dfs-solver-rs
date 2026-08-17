@@ -101,6 +101,11 @@ class Scenario:
             no-good-cut solves have no natural upper bound; the report then says
             how many lineups the budget bought, which is the honest form of the
             claim.
+        solver_max_shared: When set, a *second* solver row is measured with
+            overlap constraints at this bound — the fair diversity formulation,
+            far slower per solve. Comparing only against no-good cuts would
+            understate what a solver can do; only against this would understate
+            its speed. The mme row carries both.
         build_extra: Extra keyword arguments for `build_lineups`, merged last.
             How a scenario reaches a knob — `diversity_weight` — without this
             dataclass growing a field per parameter.
@@ -117,6 +122,7 @@ class Scenario:
     solver: bool = True
     reference: bool = True
     solver_budget_s: float | None = None
+    solver_max_shared: int | None = None
     build_extra: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -280,6 +286,11 @@ def build_scenarios() -> list[Scenario]:
             attempts=10,
             locks=locks,
             max_exposure=caps,
+            # The fair solver formulation, as a second row: at most 3 of 10
+            # players shared with each earlier lineup. Roughly the overlap the
+            # kernel's portfolio runs at, so the two are shaped alike and the
+            # remaining difference is time and projection spread.
+            solver_max_shared=3,
         ),
         Scenario(
             name="mme-diverse",

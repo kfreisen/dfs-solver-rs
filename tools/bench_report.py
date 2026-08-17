@@ -38,6 +38,7 @@ CONTEST_SCENARIO = "contest-scale"
 OURS = "mlb_dfs_solver_rust"
 PYTHON = "reference_python"
 SOLVER = "milp_ortools_cpsat"
+SOLVER_OVERLAP = "milp_ortools_cpsat_overlap"
 
 
 def duration(seconds: float) -> str:
@@ -97,22 +98,30 @@ def readme_summary(report: dict[str, Any]) -> str:
 
     headline = grouped.get(HEADLINE_SCENARIO, {})
     ours, solver = headline.get(OURS), headline.get(SOLVER)
+    overlap_solver = headline.get(SOLVER_OVERLAP)
     if ours and solver:
+        rows = [("This package", ours), ("Solver + no-good cuts", solver)]
+        if overlap_solver:
+            shared = overlap_solver["params"].get("max_shared", "k")
+            rows.append((f"Solver + max {shared}/10 shared", overlap_solver))
         lines += [
             "",
             f"**What each one generates.** The `{HEADLINE_SCENARIO}` row above, "
-            "described. The solver returns the top rosters by projection, so its "
-            "entries cluster at the optimum and are built from a fraction of the "
-            "slate. Which output you want depends on the contest.",
+            "described. With no-good cuts — the cheapest way to make a solver "
+            "produce N distinct lineups — its entries cluster at the optimum, "
+            "built from a fraction of the slate. With overlap constraints, the "
+            "fair diversity formulation, a solver spreads properly; what it pays "
+            "is the time column. Which output you want depends on the contest.",
             "",
-            "| | Players used | Mean overlap | In >50% of entries | Projection, min → max | Entries |",
-            "| --- | ---: | ---: | ---: | ---: | ---: |",
+            "| | Time | Players used | Mean overlap | In >50% of entries | Projection, min → max | Entries |",
+            "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
         ]
-        for label, case in (("This package", ours), ("Solver + no-good cuts", solver)):
+        for label, case in rows:
             q = case["quality"]
             overlap = f"{q['mean_overlap']:.0%}" if "mean_overlap" in q else "—"
             lines.append(
-                f"| {label} | **{q['distinct_players']} of {q['pool_size']}** | "
+                f"| {label} | {duration(case['median'])} | "
+                f"**{q['distinct_players']} of {q['pool_size']}** | "
                 f"{overlap} | "
                 f"{q['players_over_50pct']} | "
                 f"{q.get('worst_ratio', 0):.0%} → {q.get('best_ratio', 0):.0%} of optimum | "
