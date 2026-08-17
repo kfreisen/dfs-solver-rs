@@ -315,9 +315,9 @@ Measured on a 288-player slate, 10,000 lineups:
 
 | `diversity_weight` | distinct players | mean overlap | median entry |
 | ---: | ---: | ---: | ---: |
-| off | 92 | 35.0% | 132.6 |
-| `0.6` | 119 | 17.6% | 129.9 |
-| `1.0` | 133 | 13.8% | 128.6 |
+| off | 92 | 33.8% | 132.6 |
+| `0.6` | 119 | 18.8% | 129.9 |
+| `1.0` | 133 | 15.0% | 128.6 |
 
 It is a **preference, not a constraint**, and that is the whole reason it sits
 beside `max_exposure` instead of replacing it. A cap rejects a finished lineup at
@@ -345,17 +345,18 @@ the same portfolio.
 Caps are available at both stages, and **the stage matters more than the number.**
 
 `build_lineups(max_exposure=...)` applies the cap when parallel chunks are
-merged: over-cap lineups are discarded rather than rebuilt. That lowers yield,
-and because the limit is `floor(cap × lineups *requested*)`, a lower yield raises
-the realized share. Tightening the cap can therefore *increase* the exposure you
-actually get:
+merged: over-cap lineups are discarded rather than rebuilt. Because the limit is
+`floor(cap × lineups *requested*)`, any discard that pushes yield below the
+request raises the realized share above the cap — and tightening the cap can
+then *increase* the exposure you actually get. On a slate deep enough to absorb
+the discards, the cap simply holds:
 
 | Requested cap | Lineups returned (of 10,000) | Realized top exposure |
 | ---: | ---: | ---: |
-| none | 10,000 | 82.9% |
-| 60% | 8,650 | 69.4% |
-| 40% | 5,930 | 67.5% |
-| 25% | 3,963 | 63.1% |
+| none | 10,000 | 50.7% |
+| 60% | 10,000 | 50.7% |
+| 40% | 10,000 | 40.0% |
+| 25% | 10,000 | 25.0% |
 
 `select_portfolio(max_exposure=...)` applies the cap while choosing from a pool
 you have already built, so it skips over-cap candidates instead of discarding

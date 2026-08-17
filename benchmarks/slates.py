@@ -38,10 +38,9 @@ HITTER_SLOTS = ("C", "SS", "2B", "3B", "1B", "OF")
 SALARY_FLOOR = 49_000
 
 # Every third hitter carries a second position, which is roughly what a
-# DraftKings MLB slate looks like. Nothing in this repository had a
-# multi-position player before, which left the one formulation detail the MILP
-# baseline exists to handle -- a binary per (player, slot) rather than per player
-# -- unexercised by every published number.
+# DraftKings MLB slate looks like — and multi-position players are the reason
+# the MILP baseline assigns a binary per (player, slot) rather than per player,
+# so the fixture must contain some for that path to be measured at all.
 _SECOND_POSITION = {
     "C": "1B",
     "1B": "OF",
@@ -52,17 +51,13 @@ _SECOND_POSITION = {
 }
 _MULTI_POSITION_EVERY = 3
 
-# Pitchers and hitters are different markets and pricing them off one formula was
-# wrong. A DraftKings MLB slate has no $2,500 pitcher: the floor is a reliever
-# around $4,000, and the ladder runs through bad starters, mid starters, top
-# starters and aces at $11-12k. Hitters occupy a much narrower band, roughly
-# $2,000 to $6,500.
-#
-# It is not cosmetic. Under the old shared formula exactly three pitchers cost
-# $2,500, hitters ate the cap, and construction reached the pitcher slots with
-# $5,000 left — so it took the same two minimum-priced arms in 100% of lineups,
-# and only 3 of 32 pitchers ever appeared. That read as a diversity failure and
-# was a pricing artefact.
+# Pitchers and hitters are different markets. A DraftKings MLB slate has no
+# $2,500 pitcher: the floor is a reliever around $4,000, and the ladder runs
+# through bad starters, mid starters, top starters and aces at $11-12k. Hitters
+# occupy a much narrower band, roughly $2,000 to $6,500. Pricing both markets
+# off one formula makes the cheapest pitchers a feasibility wall — the same two
+# minimum-priced arms in 100% of lineups — which reads as a diversity failure
+# and is a pricing artefact.
 #
 # `(salary, points)` per tier. Points are what the tier is worth before the
 # mispricing term below; pitchers out-score hitters in DraftKings scoring, which
@@ -110,42 +105,33 @@ def make_slate(per_position: int = _PER_POSITION) -> PlayerPool:
 
     Team assignment is deliberately *not* `k % 10`. Salary and projection are both
     driven by `k`, so that mapping correlates team with price at 0.63 — every good
-    player on one team, every cheap one on another. Every team-shaped constraint
-    then measures that artefact instead of itself: the conflict rung collapsed to
-    two lineups out of 150 before this was fixed, not because conflicts are hard
-    but because excluding a team excluded a price bracket. Mixing by `7k + 3p`
-    keeps the correlation at 0.09 with teams still evenly sized.
+    player on one team, every cheap one on another — and every team-shaped
+    constraint then measures the price bracket instead of itself. Mixing by
+    `7k + 3p` keeps the correlation at 0.09 with teams still evenly sized.
 
     Pitchers and hitters are priced off separate ladders — see `_PITCHER_TIERS`.
     Two pitchers eat roughly a third of the cap on a real slate, which is the
-    allocation decision the whole problem turns on, and pricing both markets off
-    one formula removed it.
+    allocation decision the whole problem turns on; one shared formula removes it.
 
     Projections are distinct per player, which the obvious `4.0 + (k % 12) * 1.2`
     is not: it gives a 144-player slate twelve distinct `(salary, projection)`
-    pairs and eleven exact clones of everybody. That wrecks every quality
-    measurement made on it. The optimum stops being a single lineup, and the
-    solver's no-good cuts produce "different" lineups by swapping interchangeable
-    players — which made the solver look *more* diverse than randomized
-    construction, reversing the one comparison this package rests on. Salary stays
-    tiered, because real slates are priced in tiers.
+    pairs and eleven exact clones of everybody. On a degenerate slate the optimum
+    stops being a single lineup and a solver's no-good cuts produce "different"
+    lineups by swapping interchangeable players — inverting the one diversity
+    comparison this package rests on. Salary stays tiered, because real slates
+    are priced in tiers.
 
-    Projection is also deliberately *not* a monotone function of salary. Pricing
-    players strictly by projection makes the optimization degenerate: every legal
-    lineup that spends the cap scores about the same, so the salary floor alone
-    picks a near-optimal roster and there is no edge to find. It measured as a
-    0.997 correlation, and the visible symptom was a median lineup landing at the
-    70th percentile of *arbitrary* legal lineups rather than the high nineties —
-    not because construction was poor but because the slate had nothing to
-    discriminate. Mispriced players are the entire reason this problem is worth
-    solving; the term below puts the correlation at 0.91, which is about what a
-    real slate looks like, and keeps every projection positive.
+    Projection is also deliberately *not* a monotone function of salary. At 0.997
+    correlation every legal lineup that spends the cap scores about the same, so
+    the salary floor alone picks a near-optimal roster and there is no edge to
+    find. Mispriced players are the entire reason this problem is worth solving;
+    the term below puts the correlation at 0.91, which is about what a real slate
+    looks like, and keeps every projection positive.
 
     Every third hitter is eligible at a second position. Real slates are full of
-    them, and they are the reason the MILP baseline assigns a binary per
-    `(player, slot)` rather than per player. Measured, they cost CP-SAT more than
-    they cost the kernel — 63% against 25% — so their absence was understating
-    the gap rather than inflating it.
+    them, they are the reason the MILP baseline assigns a binary per
+    `(player, slot)` rather than per player, and they cost CP-SAT more than they
+    cost the kernel — so leaving them out understates the gap.
     """
     records: list[dict[str, object]] = []
     for position_index, position in enumerate(("P", "C", "1B", "2B", "3B", "SS", "OF")):

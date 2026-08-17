@@ -445,9 +445,9 @@ def build_lineups(
 
             | | distinct players | mean overlap |
             | ---: | ---: | ---: |
-            | off | 92 | 35.0% |
-            | `0.6` | 119 | 17.6% |
-            | `1.0` | 133 | 13.8% |
+            | off | 92 | 33.8% |
+            | `0.6` | 119 | 18.8% |
+            | `1.0` | 133 | 15.0% |
 
             The cost is projection: `1.0` gave up 3% of the median entry's
             points for those. Each chunk fades against its own accepted lineups,
@@ -477,17 +477,18 @@ def build_lineups(
             lineups are discarded rather than rebuilt.
 
             **Read the realized exposure, not the number you passed.** The limit
-            is `floor(fraction * num_lineups)` appearances, and discarding lowers
-            yield, so the share of what actually comes back runs above the
-            fraction requested — and tightening the cap can raise it. Measured on
-            a 432-player slate asking for 10,000 stacked lineups:
+            is `floor(fraction * num_lineups)` appearances, so whenever discards
+            push the yield below the request, the share of what comes back runs
+            above the fraction asked for — and tightening the cap can raise it.
+            On a slate deep enough to absorb the discards, the cap simply holds.
+            Measured on a 432-player slate asking for 10,000 stacked lineups:
 
             | Requested | Returned | Realized top exposure |
             | ---: | ---: | ---: |
-            | none | 10,000 | 82.9% |
-            | 60% | 8,650 | 69.4% |
-            | 40% | 5,930 | 67.5% |
-            | 25% | 3,963 | 63.1% |
+            | none | 10,000 | 50.7% |
+            | 60% | 10,000 | 50.7% |
+            | 40% | 10,000 | 40.0% |
+            | 25% | 10,000 | 25.0% |
 
             If you are running selection, cap there instead:
             [`select_portfolio`][mlb_dfs_solver.select.select_portfolio] skips

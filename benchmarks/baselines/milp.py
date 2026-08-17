@@ -22,14 +22,13 @@ implemented here, so read the 150-entry comparison as against the cheapest way t
 get N lineups from a solver, not the best one. The contest-scale table does not
 depend on the distinction: at 10,000 lineups both are out of reach.
 
-Speed is the smaller part of the story and was long overstated here. On a
-realistic slate a solver produces a 150-entry portfolio in seconds — not the
-"15-20 seconds per lineup" this file used to claim, which was measured on a
-degenerate slate where eleven clones of every player sent branch-and-bound
-hunting through interchangeable optima. What a solver genuinely cannot do is
-produce a *candidate pool*: twenty thousand lineups by no-good cut is the better
-part of an hour, and they would be the twenty thousand most similar lineups
-available.
+Speed is the smaller part of the story, and per-lineup solver cost is extremely
+sensitive to slate degeneracy — tied `(salary, projection)` pairs send
+branch-and-bound hunting through interchangeable optima, inflating any figure
+measured on them. On the realistic shared slate a solver produces a 150-entry
+portfolio in minutes. What it genuinely cannot do is produce a *candidate pool*:
+ten thousand lineups by no-good cut exceeds a four-hour budget, and they would
+be the ten thousand most similar lineups available.
 
 OR-Tools' CP-SAT is the baseline: open source, installs everywhere, and markedly
 faster on this problem shape than the bundled-CBC route PuLP offers — this file
