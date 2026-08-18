@@ -3,9 +3,9 @@
 Fast roster optimization: randomized greedy lineup construction and lazy-greedy submodular
 portfolio selection, implemented in Rust.
 
-> **Status: implemented, not yet published.** The code, tests, benchmarks and docs
-> are complete; `0.0.1.dev0` is the placeholder version until the first PyPI
-> release.
+> **Status: ready for its first release.** The code, tests, benchmarks and docs
+> are complete. `0.1.0` publishes when the `v0.1.0` tag is pushed; until then,
+> install from source.
 
 New here? [**How it works**](https://kfreisen.github.io/dfs-solver-rs/concepts/) is the
 background: what the problem is, where a solver is and is not the right tool, and what each stage

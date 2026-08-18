@@ -23,6 +23,8 @@ boundary.
 
 from __future__ import annotations
 
+from importlib.metadata import version as _distribution_version
+
 from dfs_solver._native import __version__ as _native_version
 from dfs_solver._native import active_isa
 from dfs_solver.greedy import (
@@ -63,7 +65,12 @@ __all__ = [
     "tail_line",
 ]
 
-__version__ = "0.0.1.dev0"
+# Read from the installed distribution rather than restated here. The compiled
+# kernel makes this package impossible to import without installing it, so the
+# metadata is always present, and one fewer copy is one fewer thing to forget on
+# a release. The argument is the distribution name, which differs from the import
+# name: you `pip install dfs-solver-rs` and `import dfs_solver`.
+__version__ = _distribution_version("dfs-solver-rs")
 
 
 def native_version() -> str:

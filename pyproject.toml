@@ -1,6 +1,6 @@
 [project]
 name = "dfs-solver-rs"
-version = "0.0.1.dev0"
+version = "0.1.0"
 description = "Fast roster optimization — randomized greedy lineup construction and lazy-greedy submodular portfolio selection, in Rust."
 readme = "README.md"
 requires-python = ">=3.11"
