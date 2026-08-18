@@ -23,9 +23,9 @@ use rand_xoshiro::Xoshiro256PlusPlus;
 use rayon::prelude::*;
 use std::collections::HashSet;
 
-use crate::roster::{GroupTally, PositionMask, RosterSpec, SpecError};
 #[cfg(test)]
 use crate::roster::SlotGroup;
+use crate::roster::{GroupTally, PositionMask, RosterSpec, SpecError};
 
 /// What every player costs in every slot group.
 ///
