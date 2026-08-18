@@ -35,7 +35,7 @@ README_END = "<!-- end:benchmark-summary -->"
 HEADLINE_SCENARIO = "mme"
 CONTEST_SCENARIO = "contest-scale"
 
-OURS = "mlb_dfs_solver_rust"
+OURS = "dfs_solver_rust"
 PYTHON = "reference_python"
 # The selection stage records its oracle under its own name.
 SELECTION_PYTHON = "selection_reference_python"

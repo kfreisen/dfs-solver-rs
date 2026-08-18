@@ -1,6 +1,6 @@
 """MILP formulations of the same problem, for comparison.
 
-This is what mlb_dfs_solver is measured against, and it is important to be precise about
+This is what dfs_solver is measured against, and it is important to be precise about
 what the comparison shows — because the naive reading of it is wrong.
 
 **A solver wins on one lineup.** Asked for the single best lineup, CP-SAT returns
@@ -53,13 +53,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from mlb_dfs_solver.spec import UNCAPPED, scaled_salary
+from dfs_solver.spec import UNCAPPED, scaled_salary
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    from mlb_dfs_solver.pool import PlayerPool
-    from mlb_dfs_solver.spec import RosterSpec
+    from dfs_solver.pool import PlayerPool
+    from dfs_solver.spec import RosterSpec
 
 __all__ = [
     "solve_milp_ortools",
@@ -348,7 +348,7 @@ def solve_portfolio_ortools(
 ) -> list[list[int]]:
     """Produce `num_lineups` distinct lineups with CP-SAT.
 
-    This is the apples-to-apples comparison against `mlb_dfs_solver.build_lineups`.
+    This is the apples-to-apples comparison against `dfs_solver.build_lineups`.
 
     Diversity comes from no-good cuts by default — the cheapest way to get N
     distinct lineups from a solver, and the way its entries end up as the top N

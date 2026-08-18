@@ -13,7 +13,7 @@ synthetic field, scored by a synthetic simulator, both written a few files away
 — a number that moves when the fixture is rewritten and describes nothing but
 the fixture. Those measures were built once and removed; do not reinstate them.
 
-The candidate build goes through `mlb_dfs_solver.recipes`, which doubles as a
+The candidate build goes through `dfs_solver.recipes`, which doubles as a
 live check that the recipe layer really is the plain calls it documents. The
 field build calls `build_lineups` directly, because a field model wants the
 machinery knobs (`noise`, `profiles`) the recipes deliberately leave out.
@@ -26,7 +26,7 @@ from dataclasses import replace
 from typing import Any
 
 import numpy as np
-from mlb_dfs_solver import JitterProfile, build_lineups, recipes, score_lineups, select_portfolio
+from dfs_solver import JitterProfile, build_lineups, recipes, score_lineups, select_portfolio
 from scenarios import scenario_by_name
 from simulate import simulate
 from slates import describe_lineups

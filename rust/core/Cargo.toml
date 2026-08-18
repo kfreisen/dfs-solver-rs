@@ -1,5 +1,5 @@
 [package]
-name = "mlb-dfs-solver-core"
+name = "dfs-solver-core"
 description = "Roster optimization algorithms. No Python, by design."
 version.workspace = true
 edition.workspace = true

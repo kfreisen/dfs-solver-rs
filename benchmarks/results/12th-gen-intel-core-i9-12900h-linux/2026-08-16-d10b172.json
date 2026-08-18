@@ -1,6 +1,6 @@
 {
   "schema": 2,
-  "package": "mlb_dfs_solver",
+  "package": "dfs_solver",
   "version": "0.0.1.dev0",
   "git_sha": "d10b172",
   "timestamp": "2026-08-16T18:28:30.206897+00:00",
@@ -15,7 +15,7 @@
   "cases": [
     {
       "name": "rules-only",
-      "impl": "mlb_dfs_solver_rust",
+      "impl": "dfs_solver_rust",
       "detail": "what DraftKings enforces: cap, slots, team caps, 2 distinct games",
       "median": 0.0011876904754899442,
       "params": {
@@ -117,7 +117,7 @@
     },
     {
       "name": "single-entry",
-      "impl": "mlb_dfs_solver_rust",
+      "impl": "dfs_solver_rust",
       "detail": "one lineup under cash rules \u2014 the case a solver wins",
       "median": 0.000506823998875916,
       "params": {
@@ -216,7 +216,7 @@
     },
     {
       "name": "cash",
-      "impl": "mlb_dfs_solver_rust",
+      "impl": "dfs_solver_rust",
       "detail": "+ a salary floor, played a few entries deep",
       "median": 0.000517697015311569,
       "params": {
@@ -318,7 +318,7 @@
     },
     {
       "name": "stack",
-      "impl": "mlb_dfs_solver_rust",
+      "impl": "dfs_solver_rust",
       "detail": "+ a 4-hitter team stack",
       "median": 0.0026857394841499627,
       "params": {
@@ -420,7 +420,7 @@
     },
     {
       "name": "conflict",
-      "impl": "mlb_dfs_solver_rust",
+      "impl": "dfs_solver_rust",
       "detail": "+ no hitters against the rostered pitcher",
       "median": 0.003057110996451229,
       "params": {
@@ -522,7 +522,7 @@
     },
     {
       "name": "locks",
-      "impl": "mlb_dfs_solver_rust",
+      "impl": "dfs_solver_rust",
       "detail": "+ an ace and a value bat in every lineup",
       "median": 0.002767323050647974,
       "params": {
@@ -624,7 +624,7 @@
     },
     {
       "name": "mme",
-      "impl": "mlb_dfs_solver_rust",
+      "impl": "dfs_solver_rust",
       "detail": "+ 60% exposure cap on every unlocked player",
       "median": 0.002855812548659742,
       "params": {
@@ -726,7 +726,7 @@
     },
     {
       "name": "mme-diverse",
-      "impl": "mlb_dfs_solver_rust",
+      "impl": "dfs_solver_rust",
       "detail": "+ diversity_weight=0.6, fading players the portfolio already used",
       "median": 0.0029119414393790066,
       "params": {
@@ -760,7 +760,7 @@
     },
     {
       "name": "showdown",
-      "impl": "mlb_dfs_solver_rust",
+      "impl": "dfs_solver_rust",
       "detail": "single game, captain at 1.5x score and salary, both teams required",
       "median": 0.0005809455178678036,
       "params": {
@@ -862,7 +862,7 @@
     },
     {
       "name": "contest-scale",
-      "impl": "mlb_dfs_solver_rust",
+      "impl": "dfs_solver_rust",
       "detail": "the mme configuration at field size, 432-player slate",
       "median": 0.3730592075153254,
       "params": {
@@ -931,7 +931,7 @@
     },
     {
       "name": "selection",
-      "impl": "mlb_dfs_solver_rust",
+      "impl": "dfs_solver_rust",
       "detail": "select 150 of 5,000 candidates, 2,000 outcomes, gpp",
       "median": 0.017502221511676908,
       "params": {

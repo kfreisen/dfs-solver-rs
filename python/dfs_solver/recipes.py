@@ -1,16 +1,16 @@
 """Intent-named starting points over `build_lineups` and `select_portfolio`.
 
-[`build_lineups`][mlb_dfs_solver.greedy.build_lineups] takes twelve parameters
+[`build_lineups`][dfs_solver.greedy.build_lineups] takes twelve parameters
 and most of them interact. The interactions are documented, but a caller who
 just wants to enter a cash game should not have to read them first. A
-[`Recipe`][mlb_dfs_solver.recipes.Recipe] is a named bundle of those same
+[`Recipe`][dfs_solver.recipes.Recipe] is a named bundle of those same
 parameters, chosen coherently for one way of playing: print it to see every
 choice, override any field with `dataclasses.replace`, and call `.build()` /
 `.select()` to run the ordinary API with them.
 
 ```python
 import dataclasses
-from mlb_dfs_solver import recipes
+from dfs_solver import recipes
 
 r = recipes.gpp(spec, seed=1)
 r = dataclasses.replace(r, diversity_weight=1.0)  # override, typed and checked
@@ -18,7 +18,7 @@ lineups = r.build(pool)
 entries = lineups[r.select(scores, line=win_line, lineups=lineups)]
 ```
 
-Recipes sit beside [`presets`][mlb_dfs_solver.presets], not inside them, because
+Recipes sit beside [`presets`][dfs_solver.presets], not inside them, because
 they are the thing presets promise never to carry: strategy. A preset says what
 the operator enforces; a recipe says how one kind of player approaches it.
 
@@ -48,14 +48,14 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from mlb_dfs_solver.greedy import build_lineups
-from mlb_dfs_solver.select import Mode, select_portfolio
-from mlb_dfs_solver.spec import RosterSpec
+from dfs_solver.greedy import build_lineups
+from dfs_solver.select import Mode, select_portfolio
+from dfs_solver.spec import RosterSpec
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    from mlb_dfs_solver.pool import PlayerPool
+    from dfs_solver.pool import PlayerPool
 
 __all__ = [
     "Mode",
@@ -73,8 +73,8 @@ class Recipe:
     """One way of playing, as explicit fields.
 
     Nothing here is a new code path: `.build()` calls
-    [`build_lineups`][mlb_dfs_solver.greedy.build_lineups] and `.select()` calls
-    [`select_portfolio`][mlb_dfs_solver.select.select_portfolio], each with
+    [`build_lineups`][dfs_solver.greedy.build_lineups] and `.select()` calls
+    [`select_portfolio`][dfs_solver.select.select_portfolio], each with
     exactly the fields on this object and the functions' own defaults for
     everything else. Print the recipe to see what was chosen; change a choice
     with `dataclasses.replace`.
@@ -121,7 +121,7 @@ class Recipe:
 
         Returns:
             An `(n, roster_size)` index array from
-            [`build_lineups`][mlb_dfs_solver.greedy.build_lineups]; `n` may be
+            [`build_lineups`][dfs_solver.greedy.build_lineups]; `n` may be
             smaller than `entries` when the pool cannot support more.
         """
         return build_lineups(
@@ -146,7 +146,7 @@ class Recipe:
 
         Args:
             sim_scores: An `(n_candidates, n_outcomes)` array from
-                [`score_lineups`][mlb_dfs_solver.select.score_lineups].
+                [`score_lineups`][dfs_solver.select.score_lineups].
             line: The score to beat — data about the contest, which is why it is
                 an argument here and not a field.
             lineups: The candidate rosters, required only when the recipe caps
@@ -154,7 +154,7 @@ class Recipe:
 
         Returns:
             Indices into `sim_scores`, as
-            [`select_portfolio`][mlb_dfs_solver.select.select_portfolio] returns
+            [`select_portfolio`][dfs_solver.select.select_portfolio] returns
             them.
 
         Raises:
@@ -297,7 +297,7 @@ def showdown(spec: RosterSpec, *, seed: int, entries: int = 150) -> Recipe:
     """A single-game contest, where the captain slot does the work.
 
     Pass a showdown spec — `DK_MLB_SHOWDOWN` or `DK_NFL_SHOWDOWN` from
-    [`presets`][mlb_dfs_solver.presets] — with the
+    [`presets`][dfs_solver.presets] — with the
     both-teams rule added once your records carry a `team` key:
     `replace(spec, groups=(*spec.groups, GroupConstraint(key="team", min_distinct=2)))`.
     The slot multipliers live on the spec, so nothing else changes: the same

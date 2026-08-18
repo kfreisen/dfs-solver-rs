@@ -8,7 +8,7 @@ nothing about what they got wrong.
 from __future__ import annotations
 
 import pytest
-from mlb_dfs_solver.spec import (
+from dfs_solver.spec import (
     UNCAPPED,
     ConflictRule,
     GroupConstraint,

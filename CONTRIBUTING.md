@@ -92,6 +92,19 @@ and must read only from small committed fixtures in `examples/data/`.
 ## Releasing
 
 Tag `v<version>`, e.g. `v0.2.0`. The release workflow verifies the tag matches
-`project.version`, builds, and publishes to PyPI via Trusted Publishing. The `pypi`
-GitHub Environment requires a manual approval, so a stray tag push cannot publish on
-its own.
+`project.version` before building anything, then builds an sdist and a wheel per
+platform — Linux x86-64 and aarch64, macOS x86-64 and arm64, Windows x86-64 — and
+publishes to PyPI via Trusted Publishing. The `pypi` GitHub Environment requires a
+manual approval, so a stray tag push cannot publish on its own.
+
+Each wheel is built on its own architecture and installed and imported there, on
+both the oldest and newest supported interpreter. That is the only check that
+exercises what abi3 promises: one `cp311-abi3` wheel per platform, loading
+unmodified on every later Python. The sdist is separately installed from the
+tarball with wheels disabled, because its file list is hand-maintained in
+`[tool.maturin] include` and nothing else in the workflow would notice a crate
+missing from it.
+
+Before publishing, `verify` asserts the release is complete and correctly tagged:
+a wheel matching every expected platform tag, no bare `linux_*` wheel (PyPI
+rejects those), and no benchmark or test code in any artifact.

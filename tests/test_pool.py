@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from mlb_dfs_solver.pool import PlayerPool
-from mlb_dfs_solver.spec import ConflictRule, GroupConstraint, RosterSpec, Slot
+from dfs_solver.pool import PlayerPool
+from dfs_solver.spec import ConflictRule, GroupConstraint, RosterSpec, Slot
 
 SPEC = RosterSpec(
     positions=("P", "C"),

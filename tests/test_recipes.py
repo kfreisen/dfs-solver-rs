@@ -12,10 +12,10 @@ import dataclasses
 
 import numpy as np
 import pytest
-from mlb_dfs_solver import build_lineups, recipes, score_lineups, select_portfolio, tail_line
-from mlb_dfs_solver.pool import PlayerPool
-from mlb_dfs_solver.select import Mode
-from mlb_dfs_solver.spec import RosterSpec
+from dfs_solver import build_lineups, recipes, score_lineups, select_portfolio, tail_line
+from dfs_solver.pool import PlayerPool
+from dfs_solver.select import Mode
+from dfs_solver.spec import RosterSpec
 
 
 @pytest.fixture

@@ -10,7 +10,7 @@ def _():
 
     import marimo as mo
     import numpy as np
-    from mlb_dfs_solver import (
+    from dfs_solver import (
         ConflictRule,
         GroupConstraint,
         PlayerPool,
@@ -19,7 +19,7 @@ def _():
         score_lineups,
         select_portfolio,
     )
-    from mlb_dfs_solver.presets import DK_MLB_CLASSIC
+    from dfs_solver.presets import DK_MLB_CLASSIC
 
     return (
         ConflictRule,
@@ -311,7 +311,7 @@ def _(mo):
 
 @app.cell
 def _(build_lineups, np, pool, replace, score_lineups, spec, universe):
-    from mlb_dfs_solver import JitterProfile
+    from dfs_solver import JitterProfile
 
     crowd = [
         JitterProfile(ceiling=(0.1, 0.6), leverage=(0.0, 0.1)),

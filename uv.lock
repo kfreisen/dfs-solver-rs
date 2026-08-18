@@ -341,6 +341,46 @@ toml = [
 ]
 
 [[package]]
+name = "dfs-solver-rs"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "numpy", version = "2.5.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+]
+
+[package.dev-dependencies]
+bench = [
+    { name = "ortools" },
+    { name = "psutil" },
+]
+dev = [
+    { name = "hypothesis" },
+    { name = "marimo" },
+    { name = "maturin" },
+    { name = "mypy" },
+    { name = "pytest" },
+    { name = "pytest-cov" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "numpy", specifier = ">=1.26" }]
+
+[package.metadata.requires-dev]
+bench = [
+    { name = "ortools", specifier = ">=9.10" },
+    { name = "psutil", specifier = ">=5.9" },
+]
+dev = [
+    { name = "hypothesis", specifier = ">=6.100" },
+    { name = "marimo", specifier = ">=0.10" },
+    { name = "maturin", specifier = ">=1.7,<2.0" },
+    { name = "mypy", specifier = ">=1.11" },
+    { name = "pytest", specifier = ">=8.0" },
+    { name = "pytest-cov", specifier = ">=5.0" },
+]
+
+[[package]]
 name = "docutils"
 version = "0.23"
 source = { registry = "https://pypi.org/simple" }
@@ -730,46 +770,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/fb/27/bf677183920718da49cd7982d6a3ffc440aad8919329f571d189f81b7bdf/maturin-1.14.1-py3-none-win32.whl", hash = "sha256:1a04de0a20188f95c721b5702eed18140bdcccb28c386797093eca3f62f4d4e0", size = 8931293, upload-time = "2026-06-19T05:19:41.183Z" },
     { url = "https://files.pythonhosted.org/packages/63/4b/585adeb9167b08d3cdff0032a938b0e72655c92003df4f52c3f696a1bcc2/maturin-1.14.1-py3-none-win_amd64.whl", hash = "sha256:3c9f94640ecc4895e94abaf834a0684430032c865b2748a36c12461fd9252fdd", size = 10314067, upload-time = "2026-06-19T05:19:44.389Z" },
     { url = "https://files.pythonhosted.org/packages/51/d4/dac8c0720ae246be1700afb6fbdbbea20fe35b13f6570b2f70faa005df77/maturin-1.14.1-py3-none-win_arm64.whl", hash = "sha256:15cea8fcb3ba47dd636f50092bb34baea8b04ac777392f23e6bf8a9a61efb894", size = 9718943, upload-time = "2026-06-19T05:19:47.49Z" },
-]
-
-[[package]]
-name = "mlb-dfs-solver"
-version = "0.0.1.dev0"
-source = { editable = "." }
-dependencies = [
-    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
-    { name = "numpy", version = "2.5.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
-]
-
-[package.dev-dependencies]
-bench = [
-    { name = "ortools" },
-    { name = "psutil" },
-]
-dev = [
-    { name = "hypothesis" },
-    { name = "marimo" },
-    { name = "maturin" },
-    { name = "mypy" },
-    { name = "pytest" },
-    { name = "pytest-cov" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "numpy", specifier = ">=1.26" }]
-
-[package.metadata.requires-dev]
-bench = [
-    { name = "ortools", specifier = ">=9.10" },
-    { name = "psutil", specifier = ">=5.9" },
-]
-dev = [
-    { name = "hypothesis", specifier = ">=6.100" },
-    { name = "marimo", specifier = ">=0.10" },
-    { name = "maturin", specifier = ">=1.7,<2.0" },
-    { name = "mypy", specifier = ">=1.11" },
-    { name = "pytest", specifier = ">=8.0" },
-    { name = "pytest-cov", specifier = ">=5.0" },
 ]
 
 [[package]]

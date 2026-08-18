@@ -1,15 +1,15 @@
 # API reference
 
-::: mlb_dfs_solver
+::: dfs_solver
 
-::: mlb_dfs_solver.spec
+::: dfs_solver.spec
 
-::: mlb_dfs_solver.pool
+::: dfs_solver.pool
 
-::: mlb_dfs_solver.greedy
+::: dfs_solver.greedy
 
-::: mlb_dfs_solver.select
+::: dfs_solver.select
 
-::: mlb_dfs_solver.presets
+::: dfs_solver.presets
 
-::: mlb_dfs_solver.recipes
+::: dfs_solver.recipes

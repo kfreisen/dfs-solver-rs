@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from mlb_dfs_solver import (
+from dfs_solver import (
     build_lineups,
     field_line,
     portfolio_value,
@@ -19,8 +19,8 @@ from mlb_dfs_solver import (
     select_portfolio,
     tail_line,
 )
-from mlb_dfs_solver.pool import PlayerPool
-from mlb_dfs_solver.spec import RosterSpec, Slot
+from dfs_solver.pool import PlayerPool
+from dfs_solver.spec import RosterSpec, Slot
 
 
 @pytest.fixture

@@ -19,9 +19,9 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from mlb_dfs_solver import _native
-from mlb_dfs_solver.pool import PlayerPool
-from mlb_dfs_solver.spec import RosterSpec
+from dfs_solver import _native
+from dfs_solver.pool import PlayerPool
+from dfs_solver.spec import RosterSpec
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -59,7 +59,7 @@ STANDARD = JitterProfile(ceiling=(0.3, 1.5), leverage=(0.2, 1.2))
 CONTRARIAN = JitterProfile(ceiling=(0.1, 0.7), leverage=(0.6, 1.6))
 """Less upside chasing, stronger ownership fade.
 
-Alternating this with [`STANDARD`][mlb_dfs_solver.greedy.STANDARD] reaches lineups
+Alternating this with [`STANDARD`][dfs_solver.greedy.STANDARD] reaches lineups
 neither profile finds alone — without it the pool collapses onto the same
 high-ceiling core.
 """
@@ -380,7 +380,7 @@ def build_lineups(
 ) -> np.ndarray:
     """Build a pool of distinct, valid lineups.
 
-    Most parameters interact; [`recipes`][mlb_dfs_solver.recipes] bundles them
+    Most parameters interact; [`recipes`][dfs_solver.recipes] bundles them
     into named per-contest-type starting points, and the recipes page in the
     docs maps each interaction.
 
@@ -469,7 +469,7 @@ def build_lineups(
         locks: Players forced into every lineup, as pool indices — or as a
             mapping from pool index to a slot name, to pin a lock to one slot
             (`{7: "CPT"}`). Which slot holds each lock is otherwise worked out by
-            [`assign_locks`][mlb_dfs_solver.greedy.assign_locks].
+            [`assign_locks`][dfs_solver.greedy.assign_locks].
 
             A lock is honoured or the lineup is not produced; it is never quietly
             dropped. If a lock cannot coexist with the cap, a group cap, or
@@ -497,7 +497,7 @@ def build_lineups(
             | 25% | 10,000 | 25.0% |
 
             If you are running selection, cap there instead:
-            [`select_portfolio`][mlb_dfs_solver.select.select_portfolio] skips
+            [`select_portfolio`][dfs_solver.select.select_portfolio] skips
             over-cap candidates from a pool you have already built rather than
             discarding from a portfolio being assembled, so it holds much closer
             to the count you asked for. Use this parameter when you are entering
@@ -516,9 +516,9 @@ def build_lineups(
 
     Example:
         ```python
-        from mlb_dfs_solver import build_lineups
-        from mlb_dfs_solver.presets import DK_MLB_CLASSIC
-        from mlb_dfs_solver.pool import PlayerPool
+        from dfs_solver import build_lineups
+        from dfs_solver.presets import DK_MLB_CLASSIC
+        from dfs_solver.pool import PlayerPool
 
         pool = PlayerPool.from_records(records, DK_MLB_CLASSIC)
         lineups = build_lineups(pool, DK_MLB_CLASSIC, num_lineups=500, seed=1)

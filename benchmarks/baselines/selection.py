@@ -75,7 +75,7 @@ def select_portfolio_reference(
 ) -> list[int]:
     """Choose a portfolio, in readable NumPy.
 
-    Mirrors `mlb_dfs_solver.select_portfolio`, including its tie-break: on equal
+    Mirrors `dfs_solver.select_portfolio`, including its tie-break: on equal
     gains the lower candidate index wins. That matters more than it sounds —
     tournament gains are counts of outcomes, so ties are the norm, and a
     different tie-break produces a different portfolio.

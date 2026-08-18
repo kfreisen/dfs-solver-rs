@@ -1,6 +1,6 @@
 [project]
-name = "mlb-dfs-solver"
-version = "0.0.1.dev0"
+name = "dfs-solver-rs"
+version = "0.1.0"
 description = "Fast roster optimization — randomized greedy lineup construction and lazy-greedy submodular portfolio selection, in Rust."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -28,21 +28,21 @@ classifiers = [
 dependencies = ["numpy>=1.26"]
 
 [project.urls]
-Homepage = "https://github.com/kfreisen/mlb-dfs-solver"
-Documentation = "https://kfreisen.github.io/mlb-dfs-solver/"
-Source = "https://github.com/kfreisen/mlb-dfs-solver"
-Issues = "https://github.com/kfreisen/mlb-dfs-solver/issues"
+Homepage = "https://github.com/kfreisen/dfs-solver-rs"
+Documentation = "https://kfreisen.github.io/dfs-solver-rs/"
+Source = "https://github.com/kfreisen/dfs-solver-rs"
+Issues = "https://github.com/kfreisen/dfs-solver-rs/issues"
 
 [build-system]
 requires = ["maturin>=1.7,<2.0"]
 build-backend = "maturin"
 
 [tool.maturin]
-# Mixed layout: hand-written Python in python/mlb_dfs_solver/, the compiled kernel built
-# into mlb_dfs_solver._native. Everything public goes through a typed Python wrapper —
+# Mixed layout: hand-written Python in python/dfs_solver/, the compiled kernel built
+# into dfs_solver._native. Everything public goes through a typed Python wrapper —
 # _native is private, and mkdocstrings cannot read a .so anyway.
 python-source = "python"
-module-name = "mlb_dfs_solver._native"
+module-name = "dfs_solver._native"
 manifest-path = "rust/native/Cargo.toml"
 # abi3 collapses the wheel matrix from (python versions x platforms) to one wheel
 # per platform. Building for the floor means the wheel also runs on every later
@@ -85,7 +85,7 @@ addopts = "-q --strict-markers --strict-config"
 filterwarnings = ["error"]
 
 [tool.coverage.run]
-source = ["mlb_dfs_solver"]
+source = ["dfs_solver"]
 branch = true
 
 [tool.coverage.report]

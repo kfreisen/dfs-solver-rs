@@ -35,15 +35,15 @@ from dataclasses import dataclass, field
 from math import floor
 from typing import TYPE_CHECKING
 
-from mlb_dfs_solver.greedy import assign_locks
-from mlb_dfs_solver.spec import scaled_salary
+from dfs_solver.greedy import assign_locks
+from dfs_solver.spec import scaled_salary
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
     import numpy as np
-    from mlb_dfs_solver.pool import PlayerPool
-    from mlb_dfs_solver.spec import GroupConstraint, RosterSpec
+    from dfs_solver.pool import PlayerPool
+    from dfs_solver.spec import GroupConstraint, RosterSpec
 
 
 @dataclass
@@ -197,7 +197,7 @@ def build_lineups_reference(
 ) -> list[list[int]]:
     """Build distinct valid lineups, in readable Python.
 
-    Mirrors `mlb_dfs_solver.build_lineups`, minus the chunking: this runs serially, so
+    Mirrors `dfs_solver.build_lineups`, minus the chunking: this runs serially, so
     there is no `chunks` argument and no cross-chunk merge. Everything else — the
     objective, the fill order, the tie-breaks, the repair — is the same.
 

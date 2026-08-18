@@ -39,7 +39,11 @@ repos:
       # a failed run on a pushed branch.
       - id: actionlint
         name: actionlint
-        entry: uvx --from actionlint-py actionlint
+        # --with shellcheck-py: actionlint runs shellcheck over every `run:`
+        # block, but only if it finds the binary. GitHub's runners ship one and a
+        # developer machine generally does not, so without this the hook silently
+        # checks less locally than in CI and passes on scripts CI rejects.
+        entry: uvx --with shellcheck-py --from actionlint-py actionlint
         language: system
         pass_filenames: false
         files: ^\.github/workflows/.*\.ya?ml$

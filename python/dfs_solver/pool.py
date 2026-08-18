@@ -2,7 +2,7 @@
 
 Stored column-wise as NumPy arrays because that is the form the kernel borrows
 directly. Building a pool from a list of records is a convenience
-([`PlayerPool.from_records`][mlb_dfs_solver.pool.PlayerPool.from_records]); the arrays
+([`PlayerPool.from_records`][dfs_solver.pool.PlayerPool.from_records]); the arrays
 are the real interface.
 
 The pool holds no reference to a specification. That is why the methods reporting
@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from mlb_dfs_solver.spec import RosterSpec
+from dfs_solver.spec import RosterSpec
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -40,7 +40,7 @@ class PlayerPool:
         ownership: Projected ownership as a fraction in `[0, 1]`. Used to fade
             popular players; pass zeros to disable that entirely.
         positions: Position eligibility bitmasks, encoded against a
-            [`RosterSpec`][mlb_dfs_solver.spec.RosterSpec].
+            [`RosterSpec`][dfs_solver.spec.RosterSpec].
         keys: Per-player group keys, e.g. `{"team": array_of_team_ids}`. A negative
             value means the player belongs to no group and is never capped.
         names: Optional labels, carried through so results are readable.

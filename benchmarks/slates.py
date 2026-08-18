@@ -15,9 +15,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import numpy as np
-from mlb_dfs_solver.pool import PlayerPool
-from mlb_dfs_solver.presets import DK_MLB_CLASSIC, DK_MLB_SHOWDOWN
-from mlb_dfs_solver.spec import RosterSpec
+from dfs_solver.pool import PlayerPool
+from dfs_solver.presets import DK_MLB_CLASSIC, DK_MLB_SHOWDOWN
+from dfs_solver.spec import RosterSpec
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

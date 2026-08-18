@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "package": "mlb-dfs-solver",
+  "package": "dfs-solver-rs",
   "version": "0.0.1.dev0",
   "git_sha": "cd3076c",
   "timestamp": "2026-08-11T01:16:33+00:00",

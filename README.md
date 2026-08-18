@@ -1,13 +1,13 @@
-# mlb_dfs_solver
+# dfs-solver-rs
 
 Fast roster optimization: randomized greedy lineup construction and lazy-greedy submodular
 portfolio selection, implemented in Rust.
 
-> **Status: implemented, not yet published.** The code, tests, benchmarks and docs
-> are complete; `0.0.1.dev0` is the placeholder version until the first PyPI
-> release.
+> **Status: ready for its first release.** The code, tests, benchmarks and docs
+> are complete. `0.1.0` publishes when the `v0.1.0` tag is pushed; until then,
+> install from source.
 
-New here? [**How it works**](https://kfreisen.github.io/mlb-dfs-solver/concepts/) is the
+New here? [**How it works**](https://kfreisen.github.io/dfs-solver-rs/concepts/) is the
 background: what the problem is, where a solver is and is not the right tool, and what each stage
 does. The short version follows.
 
@@ -26,13 +26,13 @@ Two different problems, usually conflated:
    N by projection — a set built from a narrow slice of the slate, whose entries differ from one
    another by a player or two.
 
-`mlb_dfs_solver` does (2) by randomized greedy construction: perturb the objective, fill slots,
+`dfs_solver` does (2) by randomized greedy construction: perturb the objective, fill slots,
 repeat. It is a weak optimizer per lineup and a fast one per thousand.
 
 The difference in what comes out is plain: a solver's 150 are the top rosters by projection —
 near-identical, drawn from a narrow slice of the slate. These are spread in projection and drawn
 from roughly twice as many players. Steering that trade — cash, single-entry, tournament,
-contest scale — is the [recipes page](https://kfreisen.github.io/mlb-dfs-solver/recipes/).
+contest scale — is the [recipes page](https://kfreisen.github.io/dfs-solver-rs/recipes/).
 
 ```
 build_lineups()          score_lineups()            select_portfolio()
@@ -64,17 +64,17 @@ time and describe what was generated. Which output suits your contest is your ca
 - Lazy-greedy submodular portfolio selection over simulated outcomes, in cash and tournament
   modes. Greedy is within `1 - 1/e` of the optimal portfolio *under the matrix you supply* — a
   guarantee on the search, not on the simulation. You supply the simulation.
-- Sport presets (`mlb_dfs_solver.presets`) shipped as data, not hardcoded branches.
-- Intent-named recipes (`mlb_dfs_solver.recipes`): typed bundles of the interrelated parameters,
+- Sport presets (`dfs_solver.presets`) shipped as data, not hardcoded branches.
+- Intent-named recipes (`dfs_solver.recipes`): typed bundles of the interrelated parameters,
   one per way of playing — cash, single-entry, GPP, candidate pool, showdown — each a printable
   dataclass whose `.build()` and `.select()` are plain calls to the functions above.
-- Runtime AVX2 dispatch. Wheels are built portably; `mlb_dfs_solver.active_isa()` reports which path
+- Runtime AVX2 dispatch. Wheels are built portably; `dfs_solver.active_isa()` reports which path
   your machine took.
 
 ## Benchmarks
 
 Measured against a MILP formulation of the same problem (OR-Tools CP-SAT), which lives in
-[`benchmarks/baselines/`](https://github.com/kfreisen/mlb-dfs-solver/tree/main/benchmarks/baselines)
+[`benchmarks/baselines/`](https://github.com/kfreisen/dfs-solver-rs/tree/main/benchmarks/baselines)
 as real, tested, importable code — along with a pure-Python transcription of the greedy algorithm
 that serves as the parity oracle. The solver side models every rule the specification can
 express, so the comparison is a comparison and not a handicap.
@@ -164,7 +164,7 @@ What those columns mean:
   rosters it has not already found.
 
 Full definitions, every scenario, every implementation and the hardware:
-<https://kfreisen.github.io/mlb-dfs-solver/benchmarks/>
+<https://kfreisen.github.io/dfs-solver-rs/benchmarks/>
 
 ### What is not measured
 
@@ -181,7 +181,7 @@ and on how far you trust your projections.
 Once the first release is on PyPI:
 
 ```bash
-pip install mlb-dfs-solver
+pip install dfs-solver-rs
 ```
 
 The release workflow builds binary wheels for Linux (x86-64, aarch64), macOS (arm64, x86-64),

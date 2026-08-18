@@ -64,7 +64,7 @@ build_lineups()          score_lineups()            select_portfolio()
 
 ### 1. Construction — what is legal
 
-[`build_lineups`][mlb_dfs_solver.greedy.build_lineups] produces a large pool of
+[`build_lineups`][dfs_solver.greedy.build_lineups] produces a large pool of
 valid rosters. It perturbs every player's value, sorts, and fills slots greedily,
 repairing the salary total when it lands under the floor. Then it does that
 thousands of times with different random draws.
@@ -82,7 +82,7 @@ Selection needs a matrix: what every player scored in every simulated outcome.
 constrains everything else. Simulating baseball means modelling batting order,
 park factors, handedness and the correlation between a team's hitters, none of
 which generalizes to the other sports the rest of this library handles.
-[`score_lineups`][mlb_dfs_solver.select.score_lineups] takes the matrix and sums
+[`score_lineups`][dfs_solver.select.score_lineups] takes the matrix and sums
 each roster's players out of it, applying slot multipliers on the way.
 
 The quality of what comes out of stage 3 is bounded by this matrix, not by
@@ -95,7 +95,7 @@ stage will notice.
 
 ### 3. Selection — what to enter
 
-[`select_portfolio`][mlb_dfs_solver.select.select_portfolio] chooses which
+[`select_portfolio`][dfs_solver.select.select_portfolio] chooses which
 candidates to actually enter. A candidate is scored not on its own merit but on
 what it *adds* to the entries already chosen:
 
@@ -156,7 +156,7 @@ Take the bar from a model of the field: the entries other people submit. That is
 what you are ranked against, and it is the input that makes the whole selection
 stage mean anything.
 
-[`field_line`][mlb_dfs_solver.select.field_line] will read a per-outcome quantile
+[`field_line`][dfs_solver.select.field_line] will read a per-outcome quantile
 off a score matrix, but note what it computes if you hand it your own candidates
 — a bar your own pool exceeds by construction. Use it on a field matrix, or
 compute the quantile yourself. **This package does not model a field**, so if you
@@ -170,7 +170,7 @@ path, and nothing in the package branches on which sport it is looking at.
 
 | Rule | Expressed as |
 | --- | --- |
-| Positional slots, flex slots | [`Slot`][mlb_dfs_solver.spec.Slot] with an eligibility mask |
+| Positional slots, flex slots | [`Slot`][dfs_solver.spec.Slot] with an eligibility mask |
 | Salary cap and floor | `RosterSpec.salary_cap`, `.salary_floor` |
 | "At most 6 from one team" | `GroupConstraint(max_count=...)` |
 | "At most 5 *hitters* from one team" | the same, with `slots=` naming the hitter slots |
@@ -178,7 +178,7 @@ path, and nothing in the package branches on which sport it is looking at.
 | Showdown captain worth and costing 1.5× | `Slot(score_multiplier=1.5, salary_multiplier=1.5)` |
 | "At least 4 hitters from one team" | `GroupConstraint(min_stack=4)` |
 | "... and 2 more from a second team" (the 4-2) | the same, with `secondary_min_stack=2` |
-| "No hitters against my pitcher" | [`ConflictRule`][mlb_dfs_solver.spec.ConflictRule] |
+| "No hitters against my pitcher" | [`ConflictRule`][dfs_solver.spec.ConflictRule] |
 | Locked players | `build_lineups(locks=...)` |
 | Exposure caps | `select_portfolio(max_exposure=...)`, or `build_lineups(max_exposure=...)` |
 
@@ -204,7 +204,7 @@ them.
 
 Three things to hand over and two to hand back.
 
-**The pool.** [`PlayerPool.from_records`][mlb_dfs_solver.pool.PlayerPool.from_records]
+**The pool.** [`PlayerPool.from_records`][dfs_solver.pool.PlayerPool.from_records]
 takes a sequence of mappings, so an adapter from whatever objects your projection
 layer produces is a comprehension. Multi-position eligibility is a list of names;
 team, opponent and game are ordinary keys.
@@ -276,7 +276,7 @@ reachable:
 | --- | --- |
 | Prefer popular players | a negative `leverage` exponent — it inverts the fade |
 | Concentrate on one team | `GroupConstraint(min_stack=...)` |
-| Avoid a pitcher's opposing hitters | [`ConflictRule`][mlb_dfs_solver.spec.ConflictRule] |
+| Avoid a pitcher's opposing hitters | [`ConflictRule`][dfs_solver.spec.ConflictRule] |
 | Spread the portfolio off its favourites | `build_lineups(diversity_weight=...)` — see [spreading a portfolio](#spreading-a-portfolio) |
 | Cap how often a player is used | `select_portfolio(max_exposure=...)` — see [exposure caps](#exposure-caps) |
 | Always use a player | `locks` |

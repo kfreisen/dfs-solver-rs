@@ -4,7 +4,7 @@ Hand-maintained, because the extension is a shared object: mypy cannot infer the
 and griffe (which builds the docs) cannot import them. This file is the single
 declaration of the FFI surface — keep it in step with `rust/native/src/lib.rs`.
 
-Nothing here is public API. Use the wrappers in :mod:`mlb_dfs_solver`.
+Nothing here is public API. Use the wrappers in :mod:`dfs_solver`.
 """
 
 import numpy as np
