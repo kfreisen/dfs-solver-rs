@@ -176,19 +176,24 @@ jobs:
       # toolchain. Name the expected set rather than counting files.
       - name: every platform is present
         run: |
-          ls -1 dist/
+          # nullglob so a missing artifact leaves an empty array rather than the
+          # literal pattern, which would then match nothing and read as present.
+          shopt -s nullglob
+          wheels=(dist/*.whl)
+          sdists=(dist/*.tar.gz)
+          printf '%s\n' "${wheels[@]}" "${sdists[@]}"
           missing=0
           # Not pinned to a glibc floor: `manylinux: auto` picks the container,
           # and a newer maturin moving that floor is fine. A bare `linux_*` tag
           # is not, and is what these patterns exist to catch.
           for tag in 'manylinux.*_x86_64' 'manylinux.*_aarch64' \
                      'macosx_.*_x86_64' 'macosx_.*_arm64' 'win_amd64'; do
-            if ! ls -1 dist/*.whl | grep -qE "$tag"; then
+            if ! printf '%s\n' "${wheels[@]}" | grep -qE "$tag"; then
               echo "no wheel matching $tag" >&2
               missing=1
             fi
           done
-          if ! ls -1 dist/*.tar.gz >/dev/null 2>&1; then
+          if [ ${#sdists[@]} -eq 0 ]; then
             echo "no sdist" >&2
             missing=1
           fi
