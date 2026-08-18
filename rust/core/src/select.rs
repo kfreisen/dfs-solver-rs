@@ -362,11 +362,9 @@ pub struct Candidates<'a> {
 impl Candidates<'_> {
     /// Number of candidate lineups.
     pub fn len(&self) -> usize {
-        if self.n_outcomes == 0 {
-            0
-        } else {
-            self.scores.len() / self.n_outcomes
-        }
+        // checked_div rather than a guard on n_outcomes: identical behaviour,
+        // and clippy::manual_checked_ops rejects the guarded form.
+        self.scores.len().checked_div(self.n_outcomes).unwrap_or(0)
     }
 
     /// Whether the pool is empty.
