@@ -12,9 +12,13 @@ from dataclasses import replace
 import mlb_dfs_solver
 import numpy as np
 import pytest
+from baselines.reference import validity_report
+from conftest import make_records
 from mlb_dfs_solver import CONTRARIAN, STANDARD, JitterProfile, build_lineups
+from mlb_dfs_solver.greedy import assign_locks
 from mlb_dfs_solver.pool import PlayerPool
-from mlb_dfs_solver.spec import GroupConstraint, RosterSpec
+from mlb_dfs_solver.presets import DK_NFL_SHOWDOWN
+from mlb_dfs_solver.spec import ConflictRule, GroupConstraint, RosterSpec, Slot
 
 
 def test_returns_indices_shaped_by_the_roster(tiny_pool: PlayerPool, tiny_spec: RosterSpec) -> None:
@@ -128,3 +132,913 @@ def test_public_names_are_all_importable() -> None:
     # importantly, the documented surface.
     for name in mlb_dfs_solver.__all__:
         assert hasattr(mlb_dfs_solver, name), name
+
+
+# --- Slot multipliers ----------------------------------------------------
+
+
+def showdown_spec(cap: int = 30_000, *, score: float = 1.5, salary: float = 1.5) -> RosterSpec:
+    """A single-game shape over the tiny fixture's positions."""
+    return RosterSpec(
+        positions=("P", "C", "OF"),
+        slots=(
+            Slot("CPT", ("P", "C", "OF"), score_multiplier=score, salary_multiplier=salary),
+            Slot("FLEX", ("P", "C", "OF"), count=3),
+        ),
+        salary_cap=cap,
+        salary_floor=0,
+    )
+
+
+def test_a_captain_slot_charges_its_multiplied_salary(tiny_pool: PlayerPool) -> None:
+    spec = showdown_spec()
+    lineups = build_lineups(tiny_pool, spec, num_lineups=40, seed=2)
+    assert len(lineups) > 0
+    salaries = tiny_pool.salary_of(lineups, spec)
+    assert int(salaries.max()) <= spec.salary_cap
+    # Independent of salary_of: the captain column really is dearer.
+    for lineup in lineups.tolist():
+        expected = round(int(tiny_pool.salaries[lineup[0]]) * 1.5) + sum(
+            int(tiny_pool.salaries[i]) for i in lineup[1:]
+        )
+        assert expected <= spec.salary_cap
+
+
+def test_a_multiplied_salary_binds_the_cap(tiny_pool: PlayerPool) -> None:
+    # A cap the same roster clears at 1.0x and cannot at 1.5x. If the multiplier
+    # were dropped anywhere in the fill, both would produce the same count.
+    plain = build_lineups(tiny_pool, showdown_spec(14_000, salary=1.0), num_lineups=60, seed=2)
+    multiplied = build_lineups(tiny_pool, showdown_spec(14_000), num_lineups=60, seed=2)
+    assert len(plain) > len(multiplied)
+
+
+def test_a_score_multiplier_does_not_change_the_selection(tiny_pool: PlayerPool) -> None:
+    # Documented behaviour. Every candidate for a slot is scaled by the same
+    # factor, so ordering cannot move — and a seed's output must not silently
+    # change when someone edits a multiplier.
+    plain = build_lineups(tiny_pool, showdown_spec(score=1.0, salary=1.0), num_lineups=30, seed=4)
+    scaled = build_lineups(tiny_pool, showdown_spec(score=1.5, salary=1.0), num_lineups=30, seed=4)
+    assert np.array_equal(plain, scaled)
+
+
+def test_a_score_multiplier_changes_the_lineup_value(tiny_pool: PlayerPool) -> None:
+    spec = showdown_spec(score=1.5, salary=1.0)
+    plain = showdown_spec(score=1.0, salary=1.0)
+    lineups = build_lineups(tiny_pool, spec, num_lineups=10, seed=4)
+    assert len(lineups) > 0
+    assert (tiny_pool.projection_of(lineups, spec) > tiny_pool.projection_of(lineups, plain)).all()
+
+
+def test_the_showdown_preset_builds(mlb_pool: PlayerPool) -> None:
+    # Not about MLB: the preset is the check that a multiplier-carrying spec
+    # survives the whole path from data to kernel and back.
+    records = [
+        {
+            "name": f"p{k}",
+            "positions": ("QB" if k % 6 == 0 else "WR",),
+            "salary": 4_000 + (k % 9) * 900,
+            "projection": 6.0 + (k % 9),
+            "stddev": 4.0,
+        }
+        for k in range(40)
+    ]
+    pool = PlayerPool.from_records(records, DK_NFL_SHOWDOWN)
+    lineups = build_lineups(pool, DK_NFL_SHOWDOWN, num_lineups=50, seed=5)
+    assert len(lineups) > 0
+    assert lineups.shape[1] == 6
+    assert int(pool.salary_of(lineups, DK_NFL_SHOWDOWN).max()) <= 50_000
+
+
+# --- Conflicts -----------------------------------------------------------
+
+
+def conflicted_spec(tiny_spec: RosterSpec) -> RosterSpec:
+    """`tiny_spec` plus the "no hitters against my pitcher" rule."""
+    return replace(
+        tiny_spec,
+        conflicts=(ConflictRule(left_key="opponent", right_key="team", left_positions=("P",)),),
+    )
+
+
+def opposed_pool(tiny_spec: RosterSpec) -> PlayerPool:
+    """A pool carrying both a team and an opponent, four teams paired off."""
+    records: list[dict[str, object]] = []
+    for position in ("P", "C", "OF"):
+        for k in range(8):
+            team = k % 4
+            records.append(
+                {
+                    "name": f"{position}{k}",
+                    "positions": (position,),
+                    "salary": 3000 + k * 600,
+                    "projection": 5.0 + k * 1.5,
+                    "stddev": 2.0 + (k % 3),
+                    "team": f"T{team}",
+                    # T0 plays T1, T2 plays T3.
+                    "opponent": f"T{team ^ 1}",
+                }
+            )
+    return PlayerPool.from_records(records, tiny_spec, key_fields=["team", "opponent"])
+
+
+def test_a_conflict_rule_keeps_a_pitcher_away_from_opposing_hitters(
+    tiny_spec: RosterSpec,
+) -> None:
+    pool = opposed_pool(tiny_spec)
+    spec = conflicted_spec(tiny_spec)
+    teams = pool.keys["team"]
+    opponents = pool.keys["opponent"]
+
+    # The rule must be doing work, or this passes for the wrong reason.
+    unconstrained = build_lineups(pool, tiny_spec, num_lineups=80, seed=6)
+    assert any(
+        any(opponents[a] == teams[b] for a in lineup for b in lineup)
+        for lineup in unconstrained.tolist()
+    )
+
+    lineups = build_lineups(pool, spec, num_lineups=80, seed=6)
+    assert len(lineups) > 0
+    for lineup in lineups.tolist():
+        for a in lineup:
+            for b in lineup:
+                assert not (opponents[a] == teams[b] and int(pool.positions[a]) & 1)
+
+
+def test_conflicts_are_off_unless_asked_for(tiny_spec: RosterSpec) -> None:
+    # The whole reason this is opt-in: a contrarian wanting a pitcher stacked
+    # against their own hitters must still be able to build it.
+    pool = opposed_pool(tiny_spec)
+    assert np.array_equal(
+        build_lineups(pool, tiny_spec, num_lineups=40, seed=6),
+        build_lineups(pool, replace(tiny_spec, conflicts=()), num_lineups=40, seed=6),
+    )
+
+
+def test_explicit_conflict_pairs_are_honoured(tiny_pool: PlayerPool, tiny_spec: RosterSpec) -> None:
+    # Index pairs are a fact about this pool, so they live at the call site
+    # rather than on the reusable specification.
+    baseline = build_lineups(tiny_pool, tiny_spec, num_lineups=60, seed=7)
+    # Take a pair the builder actually produces, rather than guessing one: a pair
+    # it never picks anyway would make the assertion below vacuous.
+    first = baseline.tolist()[0]
+    pair = (first[0], first[-1])
+    assert any(set(pair) <= set(lineup) for lineup in baseline.tolist())
+
+    lineups = build_lineups(tiny_pool, tiny_spec, num_lineups=60, seed=7, conflict_pairs=[pair])
+    assert len(lineups) > 0
+    for lineup in lineups.tolist():
+        assert not set(pair) <= set(lineup)
+
+
+def test_conflict_pairs_are_symmetric(tiny_pool: PlayerPool, tiny_spec: RosterSpec) -> None:
+    forward = build_lineups(tiny_pool, tiny_spec, num_lineups=40, seed=7, conflict_pairs=[(8, 20)])
+    reverse = build_lineups(tiny_pool, tiny_spec, num_lineups=40, seed=7, conflict_pairs=[(20, 8)])
+    assert np.array_equal(forward, reverse)
+
+
+def test_an_out_of_range_conflict_pair_is_rejected(
+    tiny_pool: PlayerPool, tiny_spec: RosterSpec
+) -> None:
+    # Silently dropping it would forbid nothing, and the caller would never learn
+    # that the constraint they asked for was not applied.
+    with pytest.raises(ValueError, match="but the pool has"):
+        build_lineups(tiny_pool, tiny_spec, num_lineups=5, conflict_pairs=[(0, 9999)])
+
+
+def test_a_negative_conflict_pair_is_rejected(tiny_pool: PlayerPool, tiny_spec: RosterSpec) -> None:
+    with pytest.raises(ValueError, match="non-negative pool indices"):
+        build_lineups(tiny_pool, tiny_spec, num_lineups=5, conflict_pairs=[(0, -1)])
+
+
+def test_a_conflict_rule_needs_its_key_in_the_pool(
+    tiny_pool: PlayerPool, tiny_spec: RosterSpec
+) -> None:
+    with pytest.raises(KeyError, match="conflict rule reads 'opponent'"):
+        build_lineups(tiny_pool, conflicted_spec(tiny_spec), num_lineups=5)
+
+
+# --- Locks ---------------------------------------------------------------
+
+
+def test_a_locked_player_appears_in_every_lineup(
+    tiny_pool: PlayerPool, tiny_spec: RosterSpec
+) -> None:
+    lineups = build_lineups(tiny_pool, tiny_spec, num_lineups=40, seed=8, locks=[9])
+    assert len(lineups) > 0
+    assert all(9 in lineup for lineup in lineups.tolist())
+
+
+def test_a_lock_overrides_what_the_greedy_would_have_picked(
+    tiny_pool: PlayerPool, tiny_spec: RosterSpec
+) -> None:
+    # Player 8 is the cheapest, worst-projected catcher, so an unlocked build
+    # almost never takes them. A lock that merely nudged the objective would
+    # produce a mixture.
+    unlocked = build_lineups(tiny_pool, tiny_spec, num_lineups=40, seed=8)
+    assert sum(8 in lineup for lineup in unlocked.tolist()) < len(unlocked)
+
+    locked = build_lineups(tiny_pool, tiny_spec, num_lineups=40, seed=8, locks=[8])
+    assert len(locked) > 0
+    assert all(8 in lineup for lineup in locked.tolist())
+
+
+def test_locks_land_in_their_slot_column(tiny_pool: PlayerPool, tiny_spec: RosterSpec) -> None:
+    # tiny_spec is C, OF x2, P. A catcher lock belongs in column 0.
+    lineups = build_lineups(tiny_pool, tiny_spec, num_lineups=20, seed=8, locks=[9])
+    assert all(lineup[0] == 9 for lineup in lineups.tolist())
+
+
+def test_several_locks_are_honoured_together(tiny_pool: PlayerPool, tiny_spec: RosterSpec) -> None:
+    lineups = build_lineups(tiny_pool, tiny_spec, num_lineups=30, seed=8, locks=[9, 17, 18, 1])
+    assert len(lineups) > 0
+    for lineup in lineups.tolist():
+        assert {9, 17, 18, 1} <= set(lineup)
+
+
+def test_locking_a_full_roster_yields_exactly_one_lineup(
+    tiny_pool: PlayerPool, tiny_spec: RosterSpec
+) -> None:
+    lineups = build_lineups(tiny_pool, tiny_spec, num_lineups=30, seed=8, locks=[9, 17, 18, 1])
+    assert len(lineups) == 1
+    assert lineups[0].tolist() == [9, 17, 18, 1]
+
+
+def test_locks_can_be_pinned_to_a_named_slot(tiny_pool: PlayerPool) -> None:
+    # The reason pinning exists: in a showdown every slot takes every position,
+    # so "lock this player" is ambiguous until you say which slot.
+    spec = showdown_spec(salary=1.0)
+    lineups = build_lineups(tiny_pool, spec, num_lineups=20, seed=9, locks={2: "CPT"})
+    assert len(lineups) > 0
+    assert all(lineup[0] == 2 for lineup in lineups.tolist())
+
+    flexed = build_lineups(tiny_pool, spec, num_lineups=20, seed=9, locks={2: "FLEX"})
+    assert len(flexed) > 0
+    assert all(lineup[0] != 2 and 2 in lineup for lineup in flexed.tolist())
+
+
+def test_locking_nobody_changes_nothing(tiny_pool: PlayerPool, tiny_spec: RosterSpec) -> None:
+    assert np.array_equal(
+        build_lineups(tiny_pool, tiny_spec, num_lineups=30, seed=8),
+        build_lineups(tiny_pool, tiny_spec, num_lineups=30, seed=8, locks=[]),
+    )
+
+
+def test_locks_survive_a_salary_floor(tiny_pool: PlayerPool, tiny_spec: RosterSpec) -> None:
+    # Repair reaches the floor by swapping the cheapest player out, and a lock is
+    # often exactly that player.
+    spec = replace(tiny_spec, salary_cap=22_000, salary_floor=20_000)
+    lineups = build_lineups(tiny_pool, spec, num_lineups=40, seed=10, locks=[8])
+    assert len(lineups) > 0, "repair recovered nothing to check"
+    assert all(8 in lineup for lineup in lineups.tolist())
+
+
+def test_a_lock_that_cannot_coexist_yields_nothing_rather_than_dropping_it(
+    tiny_pool: PlayerPool, tiny_spec: RosterSpec
+) -> None:
+    # Two locked outfielders on the same team, with a team cap that a four-player
+    # roster cannot then satisfy.
+    spec = replace(tiny_spec, groups=(GroupConstraint(key="team", max_count=1),))
+    lineups = build_lineups(tiny_pool, spec, num_lineups=20, seed=8, locks=[16, 20])
+    assert len(lineups) == 0
+
+
+def test_a_lock_outside_the_pool_is_rejected(tiny_pool: PlayerPool, tiny_spec: RosterSpec) -> None:
+    with pytest.raises(ValueError, match="outside a pool of"):
+        build_lineups(tiny_pool, tiny_spec, num_lineups=5, locks=[9999])
+
+
+def test_a_lock_eligible_for_no_slot_is_rejected(tiny_spec: RosterSpec) -> None:
+    # A designated hitter on a slate whose spec has no DH slot: the honest answer
+    # names the player, not "no valid lineups found".
+    spec = replace(tiny_spec, positions=("P", "C", "OF", "DH"))
+    records = [
+        *make_records(),
+        {"name": "dh", "positions": ("DH",), "salary": 3000, "projection": 5.0, "team": "T0"},
+    ]
+    pool = PlayerPool.from_records(records, spec)
+    with pytest.raises(ValueError, match="not eligible for any slot"):
+        build_lineups(pool, spec, num_lineups=5, locks=[len(records) - 1])
+
+
+def test_a_lock_pinned_to_an_unknown_slot_is_rejected(
+    tiny_pool: PlayerPool, tiny_spec: RosterSpec
+) -> None:
+    with pytest.raises(ValueError, match="this specification has"):
+        build_lineups(tiny_pool, tiny_spec, num_lineups=5, locks={9: "QB"})
+
+
+def test_a_lock_pinned_to_an_ineligible_slot_is_rejected(
+    tiny_pool: PlayerPool, tiny_spec: RosterSpec
+) -> None:
+    with pytest.raises(ValueError, match="not eligible for slot 'C'"):
+        build_lineups(tiny_pool, tiny_spec, num_lineups=5, locks={0: "C"})
+
+
+def test_the_same_player_locked_twice_is_rejected(
+    tiny_pool: PlayerPool, tiny_spec: RosterSpec
+) -> None:
+    with pytest.raises(ValueError, match="locked more than once"):
+        build_lineups(tiny_pool, tiny_spec, num_lineups=5, locks=[9, 9])
+
+
+def test_more_locks_than_a_slot_holds_is_rejected(
+    tiny_pool: PlayerPool, tiny_spec: RosterSpec
+) -> None:
+    # Two catchers, one catcher slot. Reported rather than returned empty.
+    with pytest.raises(ValueError, match="cannot be placed"):
+        build_lineups(tiny_pool, tiny_spec, num_lineups=5, locks=[8, 9])
+
+
+def test_lock_assignment_backtracks_rather_than_taking_the_first_fit(
+    tiny_pool: PlayerPool,
+) -> None:
+    """A greedy assignment would reject a set of locks that is perfectly legal.
+
+    Two locks, both eligible for the flex; only one of them can also fill the
+    dedicated slot. Assigning the first lock to the flex strands the second, even
+    though swapping them works. Matching finds the arrangement; greedy does not.
+    """
+    spec = RosterSpec(
+        positions=("P", "C", "OF"),
+        slots=(Slot("FLEX", ("C", "OF")), Slot("C", ("C",)), Slot("P", ("P",))),
+        salary_cap=30_000,
+        salary_floor=0,
+    )
+    # Player 8 is a catcher (fits both FLEX and C); player 16 is an outfielder
+    # (fits only FLEX). Listed so that a first-fit walk puts 8 in FLEX first.
+    # 8 ends up in the dedicated catcher slot (group 1) so that 16, which fits
+    # nowhere else, can have the flex (group 0).
+    assert assign_locks(tiny_pool, spec, [8, 16]) == [(8, 1), (16, 0)]
+
+    lineups = build_lineups(tiny_pool, spec, num_lineups=20, seed=11, locks=[8, 16])
+    assert len(lineups) > 0
+    for lineup in lineups.tolist():
+        assert lineup[0] == 16
+        assert lineup[1] == 8
+
+
+# --- Exposure caps -------------------------------------------------------
+
+
+def test_an_exposure_cap_bounds_appearances(tiny_pool: PlayerPool, tiny_spec: RosterSpec) -> None:
+    uncapped = build_lineups(tiny_pool, tiny_spec, num_lineups=40, seed=12)
+    counts = [sum(p in lineup for lineup in uncapped.tolist()) for p in range(len(tiny_pool))]
+    busiest = max(range(len(tiny_pool)), key=lambda p: counts[p])
+    assert counts[busiest] > 10, "nothing appeared often enough to cap"
+
+    capped = build_lineups(
+        tiny_pool, tiny_spec, num_lineups=40, seed=12, max_exposure={busiest: 0.25}
+    )
+    assert len(capped) > 0
+    assert sum(busiest in lineup for lineup in capped.tolist()) <= 10
+
+
+def test_a_global_exposure_cap_applies_to_everyone(
+    tiny_pool: PlayerPool, tiny_spec: RosterSpec
+) -> None:
+    lineups = build_lineups(tiny_pool, tiny_spec, num_lineups=40, seed=12, max_exposure=0.2)
+    assert len(lineups) > 0
+    for player in range(len(tiny_pool)):
+        assert sum(player in lineup for lineup in lineups.tolist()) <= 8
+
+
+def test_a_zero_exposure_cap_excludes_a_player(
+    tiny_pool: PlayerPool, tiny_spec: RosterSpec
+) -> None:
+    # The natural way to say "fade this player" without rebuilding the pool.
+    lineups = build_lineups(tiny_pool, tiny_spec, num_lineups=40, seed=12, max_exposure={15: 0.0})
+    assert len(lineups) > 0
+    assert all(15 not in lineup for lineup in lineups.tolist())
+
+
+def test_exposure_caps_are_deterministic(tiny_pool: PlayerPool, tiny_spec: RosterSpec) -> None:
+    # The cap is applied at the merge precisely so this holds; enforcing it
+    # inside the parallel region would make the answer depend on scheduling.
+    a = build_lineups(tiny_pool, tiny_spec, num_lineups=40, seed=12, max_exposure=0.3)
+    b = build_lineups(tiny_pool, tiny_spec, num_lineups=40, seed=12, max_exposure=0.3)
+    assert np.array_equal(a, b)
+
+
+def test_a_full_exposure_cap_changes_nothing(tiny_pool: PlayerPool, tiny_spec: RosterSpec) -> None:
+    assert np.array_equal(
+        build_lineups(tiny_pool, tiny_spec, num_lineups=30, seed=12),
+        build_lineups(tiny_pool, tiny_spec, num_lineups=30, seed=12, max_exposure=1.0),
+    )
+
+
+def test_a_tight_cap_returns_fewer_lineups_rather_than_breaking_it(
+    tiny_pool: PlayerPool, tiny_spec: RosterSpec
+) -> None:
+    lineups = build_lineups(tiny_pool, tiny_spec, num_lineups=40, seed=12, max_exposure=0.05)
+    assert 0 < len(lineups) < 40
+    for player in range(len(tiny_pool)):
+        assert sum(player in lineup for lineup in lineups.tolist()) <= 2
+
+
+def test_an_out_of_range_exposure_fraction_is_rejected(
+    tiny_pool: PlayerPool, tiny_spec: RosterSpec
+) -> None:
+    with pytest.raises(ValueError, match="fraction in"):
+        build_lineups(tiny_pool, tiny_spec, num_lineups=5, max_exposure=1.5)
+
+
+def test_exposure_naming_a_missing_player_is_rejected(
+    tiny_pool: PlayerPool, tiny_spec: RosterSpec
+) -> None:
+    with pytest.raises(ValueError, match="but the pool has"):
+        build_lineups(tiny_pool, tiny_spec, num_lineups=5, max_exposure={999: 0.5})
+
+
+def test_locking_and_capping_the_same_player_is_rejected(
+    tiny_pool: PlayerPool, tiny_spec: RosterSpec
+) -> None:
+    # Both were asked for and they cannot both hold. Honouring one silently would
+    # look exactly like the other being ignored.
+    with pytest.raises(ValueError, match="cannot both be true"):
+        build_lineups(tiny_pool, tiny_spec, num_lineups=5, locks=[9], max_exposure={9: 0.5})
+
+
+def test_locks_and_a_global_cap_coexist_when_consistent(
+    tiny_pool: PlayerPool, tiny_spec: RosterSpec
+) -> None:
+    lineups = build_lineups(
+        tiny_pool, tiny_spec, num_lineups=30, seed=12, locks=[9], max_exposure={16: 0.2}
+    )
+    assert len(lineups) > 0
+    assert all(9 in lineup for lineup in lineups.tolist())
+    assert sum(16 in lineup for lineup in lineups.tolist()) <= 6
+
+
+# --- Minimums ------------------------------------------------------------
+
+
+def distinct_teams(pool: PlayerPool, lineup: list[int]) -> int:
+    return len({int(pool.keys["team"][p]) for p in lineup})
+
+
+def biggest_stack(pool: PlayerPool, lineup: list[int]) -> int:
+    counts: dict[int, int] = {}
+    for p in lineup:
+        key = int(pool.keys["team"][p])
+        counts[key] = counts.get(key, 0) + 1
+    return max(counts.values(), default=0)
+
+
+def top_two_stacks(pool: PlayerPool, lineup: list[int]) -> tuple[int, int]:
+    counts: dict[int, int] = {}
+    for p in lineup:
+        key = int(pool.keys["team"][p])
+        counts[key] = counts.get(key, 0) + 1
+    sizes = sorted(counts.values(), reverse=True)
+    return (sizes[0] if sizes else 0, sizes[1] if len(sizes) > 1 else 0)
+
+
+def test_a_distinct_minimum_is_met_by_every_lineup(
+    tiny_pool: PlayerPool, tiny_spec: RosterSpec
+) -> None:
+    spec = replace(tiny_spec, groups=(GroupConstraint(key="team", min_distinct=3),))
+    lineups = build_lineups(tiny_pool, spec, num_lineups=50, seed=40)
+    assert len(lineups) > 0
+    assert all(distinct_teams(tiny_pool, lineup) >= 3 for lineup in lineups.tolist())
+
+
+def test_a_distinct_minimum_actually_binds(tiny_pool: PlayerPool, tiny_spec: RosterSpec) -> None:
+    # Without it the builder returns lineups from fewer teams, so the assertion
+    # above is not passing for free.
+    loose = build_lineups(tiny_pool, tiny_spec, num_lineups=50, seed=40)
+    assert any(distinct_teams(tiny_pool, lineup) < 4 for lineup in loose.tolist())
+
+    spec = replace(tiny_spec, groups=(GroupConstraint(key="team", min_distinct=4),))
+    lineups = build_lineups(tiny_pool, spec, num_lineups=50, seed=40)
+    assert len(lineups) > 0
+    assert all(distinct_teams(tiny_pool, lineup) == 4 for lineup in lineups.tolist())
+
+
+def test_a_distinct_minimum_counts_only_its_named_slots(
+    tiny_pool: PlayerPool, tiny_spec: RosterSpec
+) -> None:
+    # Three distinct teams among C and the two OF slots; the pitcher does not
+    # help satisfy it.
+    spec = replace(
+        tiny_spec, groups=(GroupConstraint(key="team", min_distinct=3, slots=("C", "OF")),)
+    )
+    lineups = build_lineups(tiny_pool, spec, num_lineups=40, seed=41)
+    assert len(lineups) > 0
+    for lineup in lineups.tolist():
+        assert distinct_teams(tiny_pool, lineup[:3]) >= 3
+
+
+def test_a_distinct_minimum_the_pool_cannot_meet_returns_nothing(
+    tiny_spec: RosterSpec,
+) -> None:
+    records = [{**r, "team": "ONE"} for r in make_records()]
+    pool = PlayerPool.from_records(records, tiny_spec)
+    spec = replace(tiny_spec, groups=(GroupConstraint(key="team", min_distinct=2),))
+    assert len(build_lineups(pool, spec, num_lineups=20, seed=41)) == 0
+
+
+def test_a_stack_minimum_is_met_by_every_lineup(
+    tiny_pool: PlayerPool, tiny_spec: RosterSpec
+) -> None:
+    spec = replace(tiny_spec, groups=(GroupConstraint(key="team", min_stack=3),))
+    lineups = build_lineups(tiny_pool, spec, num_lineups=50, seed=42)
+    assert len(lineups) > 0
+    assert all(biggest_stack(tiny_pool, lineup) >= 3 for lineup in lineups.tolist())
+
+
+def test_a_stack_minimum_actually_binds(tiny_pool: PlayerPool, tiny_spec: RosterSpec) -> None:
+    loose = build_lineups(tiny_pool, tiny_spec, num_lineups=50, seed=42)
+    assert any(biggest_stack(tiny_pool, lineup) < 3 for lineup in loose.tolist())
+
+
+def test_stacks_spread_across_teams(tiny_pool: PlayerPool, tiny_spec: RosterSpec) -> None:
+    # The reason the target is redrawn per attempt. A builder that answered
+    # "which team?" once would return a portfolio stacked entirely on one team.
+    spec = replace(tiny_spec, groups=(GroupConstraint(key="team", min_stack=3),))
+    lineups = build_lineups(tiny_pool, spec, num_lineups=60, seed=43)
+    assert len(lineups) > 5
+    stacked = set()
+    for lineup in lineups.tolist():
+        counts: dict[int, int] = {}
+        for p in lineup:
+            key = int(tiny_pool.keys["team"][p])
+            counts[key] = counts.get(key, 0) + 1
+        stacked.add(max(counts, key=lambda k: counts[k]))
+    assert len(stacked) > 1, f"every lineup stacked the same team: {stacked}"
+
+
+def test_a_stack_the_pool_cannot_supply_returns_nothing(tiny_spec: RosterSpec) -> None:
+    # Every player on their own team, so no team has a second player. The roster
+    # has room for the stack; the pool simply cannot supply it.
+    records = [{**r, "team": f"T{i}"} for i, r in enumerate(make_records())]
+    pool = PlayerPool.from_records(records, tiny_spec)
+    spec = replace(tiny_spec, groups=(GroupConstraint(key="team", min_stack=2),))
+    assert len(build_lineups(pool, spec, num_lineups=20, seed=43)) == 0
+
+
+def test_a_stack_pair_is_met_by_every_lineup(tiny_pool: PlayerPool, tiny_spec: RosterSpec) -> None:
+    # The 4-2 shape, at tiny scale: some team supplies two players and a
+    # *different* team supplies two more.
+    spec = replace(
+        tiny_spec, groups=(GroupConstraint(key="team", min_stack=2, secondary_min_stack=2),)
+    )
+    lineups = build_lineups(tiny_pool, spec, num_lineups=40, seed=46)
+    assert len(lineups) > 0
+    for lineup in lineups.tolist():
+        best, second = top_two_stacks(tiny_pool, lineup)
+        assert best >= 2, lineup
+        assert second >= 2, lineup
+
+
+def test_a_stack_pair_actually_binds(tiny_pool: PlayerPool, tiny_spec: RosterSpec) -> None:
+    # The same build with only the primary produces at least one lineup the
+    # pair would reject — otherwise the test above proves nothing.
+    spec = replace(tiny_spec, groups=(GroupConstraint(key="team", min_stack=2),))
+    lineups = build_lineups(tiny_pool, spec, num_lineups=40, seed=46)
+    assert any(top_two_stacks(tiny_pool, lineup)[1] < 2 for lineup in lineups.tolist())
+
+
+def test_a_stack_pair_one_team_cannot_supply_returns_nothing(tiny_spec: RosterSpec) -> None:
+    # Every player on one team: the primary is trivially satisfiable, the
+    # secondary never is.
+    records = [{**r, "team": "ONE"} for r in make_records()]
+    pool = PlayerPool.from_records(records, tiny_spec)
+    spec = replace(
+        tiny_spec, groups=(GroupConstraint(key="team", min_stack=2, secondary_min_stack=2),)
+    )
+    assert len(build_lineups(pool, spec, num_lineups=20, seed=47)) == 0
+
+
+def test_a_secondary_above_the_primary_is_rejected() -> None:
+    with pytest.raises(ValueError, match="swap them"):
+        GroupConstraint(key="team", min_stack=2, secondary_min_stack=3)
+
+
+def test_a_secondary_without_a_primary_is_rejected() -> None:
+    with pytest.raises(ValueError, match="relative to a primary"):
+        GroupConstraint(key="team", secondary_min_stack=2)
+
+
+def test_a_stack_pair_beyond_the_roster_is_rejected(
+    tiny_pool: PlayerPool, tiny_spec: RosterSpec
+) -> None:
+    # 3 + 2 from different teams needs five of a four-player roster.
+    with pytest.raises(ValueError, match="satisfy both"):
+        replace(
+            tiny_spec, groups=(GroupConstraint(key="team", min_stack=3, secondary_min_stack=2),)
+        )
+
+
+def test_a_stack_and_a_cap_coexist(tiny_pool: PlayerPool, tiny_spec: RosterSpec) -> None:
+    # The shape a real MLB spec has: stack four hitters from a team, and never
+    # more than five from any one.
+    spec = replace(
+        tiny_spec,
+        groups=(GroupConstraint(key="team", max_count=3, min_stack=3),),
+    )
+    lineups = build_lineups(tiny_pool, spec, num_lineups=40, seed=44)
+    assert len(lineups) > 0
+    for lineup in lineups.tolist():
+        assert biggest_stack(tiny_pool, lineup) == 3
+
+
+def test_a_stack_and_a_distinct_minimum_hold_together(
+    tiny_pool: PlayerPool, tiny_spec: RosterSpec
+) -> None:
+    # They pull in opposite directions: one concentrates, the other spreads.
+    spec = replace(
+        tiny_spec,
+        groups=(
+            GroupConstraint(key="team", min_stack=2),
+            GroupConstraint(key="team", min_distinct=3),
+        ),
+    )
+    lineups = build_lineups(tiny_pool, spec, num_lineups=40, seed=45)
+    assert len(lineups) > 0
+    for lineup in lineups.tolist():
+        assert biggest_stack(tiny_pool, lineup) >= 2
+        assert distinct_teams(tiny_pool, lineup) >= 3
+
+
+def test_minimums_survive_a_salary_floor(tiny_pool: PlayerPool, tiny_spec: RosterSpec) -> None:
+    spec = replace(
+        tiny_spec,
+        salary_cap=22_000,
+        salary_floor=20_000,
+        groups=(
+            GroupConstraint(key="team", min_stack=2),
+            GroupConstraint(key="team", min_distinct=2),
+        ),
+    )
+    lineups = build_lineups(tiny_pool, spec, num_lineups=40, seed=46)
+    assert len(lineups) > 0, "repair recovered nothing to check"
+    for lineup in lineups.tolist():
+        assert biggest_stack(tiny_pool, lineup) >= 2
+        assert distinct_teams(tiny_pool, lineup) >= 2
+
+
+def test_minimums_are_deterministic(tiny_pool: PlayerPool, tiny_spec: RosterSpec) -> None:
+    # The stack target is drawn from the same generator as the jitter, so the
+    # output must stay a function of the seed alone.
+    spec = replace(tiny_spec, groups=(GroupConstraint(key="team", min_stack=3),))
+    assert np.array_equal(
+        build_lineups(tiny_pool, spec, num_lineups=40, seed=47),
+        build_lineups(tiny_pool, spec, num_lineups=40, seed=47),
+    )
+
+
+def test_minimums_compose_with_locks_and_exposure(
+    tiny_pool: PlayerPool, tiny_spec: RosterSpec
+) -> None:
+    spec = replace(tiny_spec, groups=(GroupConstraint(key="team", min_distinct=3),))
+    lineups = build_lineups(
+        tiny_pool, spec, num_lineups=30, seed=48, locks=[9], max_exposure={16: 0.3}
+    )
+    assert len(lineups) > 0
+    for lineup in lineups.tolist():
+        assert 9 in lineup
+        assert distinct_teams(tiny_pool, lineup) >= 3
+    assert sum(16 in lineup for lineup in lineups.tolist()) <= 9
+
+
+def test_an_expensive_lock_in_a_late_slot_group_is_affordable(
+    mlb_pool: PlayerPool, mlb_spec: RosterSpec
+) -> None:
+    """Locking a star must work as well as locking a scrub.
+
+    The salary reservation used to hold back the *cheapest* eligible player for
+    every slot group still to come. An expensive lock in a late group therefore
+    had its budget spent by the earlier groups and was unaffordable on every
+    attempt: on this slate, locking the dearest pitcher returned 0 lineups of 100
+    while locking the cheapest returned all 100. Reads as the feature being
+    broken, which it was.
+
+    Pitchers fill last in DK_MLB_CLASSIC, so this is the shape that hides it.
+    """
+    pitcher = mlb_spec.mask_for(("P",))
+    pitchers = [i for i in range(len(mlb_pool)) if int(mlb_pool.positions[i]) & pitcher]
+    dearest = max(pitchers, key=lambda i: int(mlb_pool.salaries[i]))
+
+    lineups = build_lineups(mlb_pool, mlb_spec, num_lineups=100, seed=3, locks=[dearest])
+    # Measured at 0 of 100 before the fix and 50 after. The threshold is well
+    # below that because pricing salary into the ranking (see `value_weight`)
+    # legitimately disfavours the most expensive pitcher — the bug being guarded
+    # against made it unreachable, not merely unpopular.
+    assert len(lineups) > 25, f"only {len(lineups)} of 100"
+    assert all(dearest in lineup for lineup in lineups.tolist())
+    assert int(mlb_pool.salary_of(lineups, mlb_spec).max()) <= mlb_spec.salary_cap
+
+
+def test_a_locked_player_is_not_offered_as_a_cheap_option_elsewhere(
+    mlb_pool: PlayerPool, mlb_spec: RosterSpec
+) -> None:
+    # A lock cannot fill any other slot, so counting it among a group's cheapest
+    # eligible players understates what the rest of the roster must cost.
+    cheapest = min(range(len(mlb_pool)), key=lambda i: int(mlb_pool.salaries[i]))
+    lineups = build_lineups(mlb_pool, mlb_spec, num_lineups=50, seed=3, locks=[cheapest])
+    assert len(lineups) > 0
+    assert int(mlb_pool.salary_of(lineups, mlb_spec).max()) <= mlb_spec.salary_cap
+    assert int(mlb_pool.salary_of(lineups, mlb_spec).min()) >= mlb_spec.salary_floor
+
+
+def test_a_negative_value_weight_is_rejected(tiny_pool: PlayerPool, tiny_spec: RosterSpec) -> None:
+    # Negative would *reward* spending, ranking a player above an identical
+    # cheaper one, which is never what anyone means.
+    with pytest.raises(ValueError, match="value_weight must be non-negative"):
+        build_lineups(tiny_pool, tiny_spec, num_lineups=5, value_weight=-0.5)
+
+
+def test_pricing_salary_prefers_value_over_raw_projection(tiny_spec: RosterSpec) -> None:
+    """The default ranks by surplus over the pool's price for a point.
+
+    Ranking by projection alone systematically overspends — the fill takes the
+    best remaining player at every slot and reaches the last with nothing left.
+
+    Needs a pool where projection is *not* a monotone function of salary, which
+    the shared fixtures are not: `mlb_pool` has twelve distinct
+    (salary, projection) pairs across ninety players, so the dearest player is
+    always the best and there is no value to find. On that slate pricing salary
+    changes nothing, correctly. Mispriced players are the whole point.
+    """
+    records: list[dict[str, object]] = []
+    for position in ("P", "C", "OF"):
+        for k in range(10):
+            records.append(
+                {
+                    "name": f"{position}{k}",
+                    "positions": (position,),
+                    "salary": 3000 + k * 700,
+                    # Every third player is a bargain and every third is a trap.
+                    "projection": 5.0 + k * 1.4 + ((k * 5) % 3 - 1) * 3.2,
+                    "stddev": 2.0,
+                    "team": f"T{k % 4}",
+                }
+            )
+    pool = PlayerPool.from_records(records, tiny_spec)
+    # A cap that genuinely binds. Under a loose one there is enough budget to
+    # take the best player at every slot, so nothing is traded off and pricing
+    # has nothing to correct.
+    spec = replace(tiny_spec, salary_cap=22_000)
+
+    plain = build_lineups(pool, spec, num_lineups=2_000, seed=4, value_weight=0.0)
+    priced = build_lineups(pool, spec, num_lineups=2_000, seed=4)
+
+    # The median rather than the best. On a thirty-player pool the best roster is
+    # reachable either way; what pricing changes is the whole distribution, which
+    # is also what matters when selection picks from it.
+    median_plain = float(np.median(pool.projection_of(plain, spec)))
+    median_priced = float(np.median(pool.projection_of(priced, spec)))
+    assert median_priced > median_plain, (
+        f"pricing salary should lift the pool: {median_priced:.2f} vs {median_plain:.2f}"
+    )
+
+
+def test_a_supplied_ceiling_is_expressible_as_an_implied_stddev(
+    tiny_spec: RosterSpec,
+) -> None:
+    """A caller with a real upside estimate does not need a new column.
+
+    The objective values a player at `projection + t * stddev` with `t` drawn per
+    attempt, so a P95 ceiling enters as `stddev = (ceiling - projection) / 1.645`
+    and is then hit exactly at `t = 1.645`. Nothing is lost by the conversion:
+    only the upside term is ever used, so an asymmetric right-tail estimate does
+    not drag an implied downside along with it.
+    """
+    z = 1.645
+    records = [
+        {
+            "name": f"p{i}",
+            "positions": (position,),
+            "salary": 3000 + i * 500,
+            "projection": 8.0 + i,
+            # A ceiling that is deliberately not a fixed multiple of anything.
+            "stddev": ((8.0 + i + (3.0 if i % 2 else 11.0)) - (8.0 + i)) / z,
+            "team": f"T{i % 4}",
+        }
+        for position in ("P", "C", "OF")
+        for i in range(8)
+    ]
+    pool = PlayerPool.from_records(records, tiny_spec)
+
+    # The player's value at t = z is exactly the ceiling that was supplied.
+    for i in (0, 1, 5):
+        ceiling = float(pool.projections[i]) + z * float(pool.stddevs[i])
+        expected = 8.0 + i + (3.0 if i % 2 else 11.0)
+        assert ceiling == pytest.approx(expected)
+
+    assert len(build_lineups(pool, tiny_spec, num_lineups=50, seed=1)) > 0
+
+
+def test_a_negative_leverage_exponent_chases_chalk(
+    tiny_pool: PlayerPool, tiny_spec: RosterSpec
+) -> None:
+    """Preferring popular players needs no new feature.
+
+    Leverage is an exponent on `(1 - ownership)`, so a negative one inverts the
+    fade. Worth pinning because it is the answer to a whole class of "can it
+    also reward X" requests: several of them are already reachable by pointing
+    an existing knob the other way.
+    """
+    fade = build_lineups(
+        tiny_pool,
+        tiny_spec,
+        num_lineups=100,
+        seed=2,
+        profiles=[JitterProfile((0.3, 1.0), (0.5, 1.5))],
+    )
+    chalk = build_lineups(
+        tiny_pool,
+        tiny_spec,
+        num_lineups=100,
+        seed=2,
+        profiles=[JitterProfile((0.3, 1.0), (-1.5, -0.5))],
+    )
+    assert float(np.mean(tiny_pool.ownership[chalk])) > float(np.mean(tiny_pool.ownership[fade]))
+
+
+def test_diversity_weight_defaults_to_off(mlb_pool: PlayerPool, mlb_spec: RosterSpec) -> None:
+    """The guarantee that lets this ship without changing anybody's output."""
+    plain = build_lineups(mlb_pool, mlb_spec, num_lineups=120, seed=4)
+    explicit = build_lineups(mlb_pool, mlb_spec, num_lineups=120, seed=4, diversity_weight=0.0)
+    np.testing.assert_array_equal(plain, explicit)
+
+
+def test_diversity_weight_reaches_more_of_the_pool(
+    mlb_pool: PlayerPool, mlb_spec: RosterSpec
+) -> None:
+    """The claim the parameter exists to make."""
+    kwargs = {"num_lineups": 400, "seed": 4, "attempts_per_lineup": 6, "chunks": 8}
+    plain = build_lineups(mlb_pool, mlb_spec, **kwargs)
+    spread = build_lineups(mlb_pool, mlb_spec, diversity_weight=1.0, **kwargs)
+    assert len(set(spread.ravel().tolist())) > len(set(plain.ravel().tolist()))
+
+
+def test_diversity_weight_does_not_cost_lineups(mlb_pool: PlayerPool, mlb_spec: RosterSpec) -> None:
+    """A preference, not a cap. An exposure limit reaches the same spread by
+    discarding finished lineups; this must not."""
+    kwargs = {"num_lineups": 300, "seed": 4, "attempts_per_lineup": 8, "chunks": 8}
+    plain = build_lineups(mlb_pool, mlb_spec, **kwargs)
+    spread = build_lineups(mlb_pool, mlb_spec, diversity_weight=2.0, **kwargs)
+    assert len(spread) == len(plain)
+
+
+def test_diversity_weight_is_reproducible(mlb_pool: PlayerPool, mlb_spec: RosterSpec) -> None:
+    kwargs = {"num_lineups": 200, "seed": 4, "attempts_per_lineup": 6, "diversity_weight": 0.8}
+    np.testing.assert_array_equal(
+        build_lineups(mlb_pool, mlb_spec, **kwargs), build_lineups(mlb_pool, mlb_spec, **kwargs)
+    )
+
+
+def test_diversity_weight_rejects_a_negative(mlb_pool: PlayerPool, mlb_spec: RosterSpec) -> None:
+    with pytest.raises(ValueError, match="diversity_weight must be non-negative"):
+        build_lineups(mlb_pool, mlb_spec, num_lineups=5, diversity_weight=-0.5)
+
+
+def test_diversity_weight_lineups_stay_valid(mlb_pool: PlayerPool, mlb_spec: RosterSpec) -> None:
+    """Fading changes what construction prefers, never what it is allowed to do."""
+    lineups = build_lineups(
+        mlb_pool, mlb_spec, num_lineups=200, seed=4, attempts_per_lineup=6, diversity_weight=1.5
+    )
+    assert len(lineups) > 0
+    assert validity_report(lineups, mlb_pool, mlb_spec) == ""
+
+
+@pytest.mark.parametrize("num_lineups", [5, 10, 20, 43, 64, 150])
+def test_both_profiles_are_drawn_at_every_size(
+    mlb_pool: PlayerPool, mlb_spec: RosterSpec, num_lineups: int
+) -> None:
+    """The default profile pair must actually alternate.
+
+    It did not below 43 lineups: `chunks=64` left one attempt per chunk, the
+    cycle never advanced, and every build ran on CONTRARIAN alone — silently
+    deleting the profile whose job is to stop the pool collapsing onto one
+    high-ceiling core.
+    """
+    mixed = build_lineups(mlb_pool, mlb_spec, num_lineups=num_lineups, seed=4)
+    collapsed = build_lineups(
+        mlb_pool, mlb_spec, num_lineups=num_lineups, seed=4, profiles=[CONTRARIAN]
+    )
+    assert mixed.shape != collapsed.shape or not np.array_equal(mixed, collapsed)
+
+
+@pytest.mark.parametrize("num_lineups", [10, 20, 50, 150])
+def test_diversity_weight_is_live_at_every_size(
+    mlb_pool: PlayerPool, mlb_spec: RosterSpec, num_lineups: int
+) -> None:
+    """Same root cause: a chunk with no history has nothing to fade against."""
+    plain = build_lineups(mlb_pool, mlb_spec, num_lineups=num_lineups, seed=4)
+    spread = build_lineups(
+        mlb_pool, mlb_spec, num_lineups=num_lineups, seed=4, diversity_weight=1.0
+    )
+    assert plain.shape != spread.shape or not np.array_equal(plain, spread)
+
+
+def test_chunks_above_the_clamp_agree(mlb_pool: PlayerPool, mlb_spec: RosterSpec) -> None:
+    """`chunks` is an upper bound, so above the clamp it stops mattering.
+
+    Asserted rather than footnoted, because it is a real weakening of the
+    reproducibility contract documented on the parameter.
+    """
+    a = build_lineups(mlb_pool, mlb_spec, num_lineups=20, seed=4, chunks=64)
+    b = build_lineups(mlb_pool, mlb_spec, num_lineups=20, seed=4, chunks=256)
+    np.testing.assert_array_equal(a, b)

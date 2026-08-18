@@ -19,7 +19,7 @@ build time, via the `features` key in `pyproject.toml`.
 ## Working here
 
 ```bash
-cargo test -p mlb_dfs_solver-core          # no Python needed
+cargo test -p mlb-dfs-solver-core          # no Python needed
 cargo clippy --all-targets -- -D warnings
 cargo fmt --all
 ```
@@ -27,17 +27,17 @@ cargo fmt --all
 To build the extension into the Python environment:
 
 ```bash
-cd ..            # packages/mlb_dfs_solver
+cd ..                    # the repository root
 uv sync --all-extras     # builds the extension as part of the install
 ```
 
 ## Coverage
 
 ```bash
-cargo llvm-cov -p mlb_dfs_solver-core --fail-under-lines 90
+cargo llvm-cov -p mlb-dfs-solver-core --fail-under-lines 90
 ```
 
-90 rather than the 100 the Python side holds to. The gap is the parallel merge and
+90 rather than the 95 the Python side holds to. The gap is the parallel merge and
 a few defensive branches that a unit test cannot provoke without reaching into
 rayon's scheduling.
 

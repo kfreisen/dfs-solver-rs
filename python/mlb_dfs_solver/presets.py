@@ -7,13 +7,42 @@ branch anywhere in this package that asks which sport it is looking at.
 Operators change these rules, sometimes mid-season. Treat a preset as a starting
 point that was correct when written, and check it against the contest you are
 actually entering.
+
+No preset declares a [`ConflictRule`][mlb_dfs_solver.spec.ConflictRule] or a
+`min_stack`. Rules here are the ones the operator enforces; "no hitters against my
+pitcher" and "stack four bats" are strategies, and a preset that quietly imposed
+either would be wrong for anyone playing differently. Add them with
+`dataclasses.replace`.
+
+Nor does any preset carry the "players from at least two different games" rule
+these contests do impose. It needs a `game` key on every player, which a pool
+built for a preset that never asked for one would not have, and a constraint
+naming a missing key fails loudly at build time. Add it yourself once your
+records carry the key:
+
+```python
+from dataclasses import replace
+from mlb_dfs_solver.presets import DK_NFL_CLASSIC
+from mlb_dfs_solver.spec import GroupConstraint
+
+spec = replace(
+    DK_NFL_CLASSIC,
+    groups=(*DK_NFL_CLASSIC.groups, GroupConstraint(key="game", min_distinct=2)),
+)
+```
 """
 
 from __future__ import annotations
 
 from mlb_dfs_solver.spec import GroupConstraint, RosterSpec, Slot
 
-__all__ = ["DK_MLB_CLASSIC", "DK_NFL_CLASSIC", "PRESETS"]
+__all__ = [
+    "DK_MLB_CLASSIC",
+    "DK_MLB_SHOWDOWN",
+    "DK_NFL_CLASSIC",
+    "DK_NFL_SHOWDOWN",
+    "PRESETS",
+]
 
 
 # Slots are listed scarce-first, which is the order construction fills them in.
@@ -32,11 +61,10 @@ DK_MLB_CLASSIC = RosterSpec(
         Slot("P", ("P",), count=2),
     ),
     salary_cap=50_000,
-    # A floor is unusual — DraftKings does not impose one. It is here because
-    # leaving salary unspent is almost always a mistake in a large-field contest,
-    # and making it a constraint is cheaper than filtering afterwards. Set it to 0
-    # to disable.
-    salary_floor=49_000,
+    # DraftKings imposes no floor, so neither does this. Leaving salary unspent is
+    # usually a mistake, but that is a strategy and belongs with the caller's
+    # other strategy — `replace(DK_MLB_CLASSIC, salary_floor=49_000)` sets one.
+    salary_floor=0,
     groups=(
         GroupConstraint(key="team", max_count=6),
         # Five hitters plus that team's starting pitcher is a common and legal
@@ -71,8 +99,63 @@ DK_NFL_CLASSIC = RosterSpec(
 )
 
 
+# A single-game contest, which is the format that makes slot multipliers load
+# bearing rather than decorative: the captain scores 1.5x and costs 1.5x, so the
+# same player is a different proposition depending on where they are rostered.
+#
+# Every position fills every slot here, which means slot *order* is doing all the
+# work — the captain is listed first so the fill spends its premium on the best
+# available player rather than on whoever is left.
+DK_NFL_SHOWDOWN = RosterSpec(
+    positions=("QB", "RB", "WR", "TE", "K", "DST"),
+    slots=(
+        Slot(
+            "CPT",
+            ("QB", "RB", "WR", "TE", "K", "DST"),
+            score_multiplier=1.5,
+            salary_multiplier=1.5,
+        ),
+        Slot("FLEX", ("QB", "RB", "WR", "TE", "K", "DST"), count=5),
+    ),
+    salary_cap=50_000,
+    salary_floor=0,
+    # DraftKings also requires players from both teams. That is expressible —
+    # `GroupConstraint(key="team", min_distinct=2)` — but it is left off here for
+    # the same reason as the game rule above: it needs a key on every record, and
+    # a preset cannot know the caller supplied one. Add it when yours does.
+    groups=(),
+)
+
+
+# The MLB single-game format. Captain scores 1.5x and costs 1.5x, the same shape
+# as the NFL one; every position fills every slot, so slot *order* does the work
+# and the captain is listed first to spend its premium on the best available
+# player rather than on whoever is left.
+DK_MLB_SHOWDOWN = RosterSpec(
+    positions=("P", "C", "1B", "2B", "3B", "SS", "OF"),
+    slots=(
+        Slot(
+            "CPT",
+            ("P", "C", "1B", "2B", "3B", "SS", "OF"),
+            score_multiplier=1.5,
+            salary_multiplier=1.5,
+        ),
+        Slot("UTIL", ("P", "C", "1B", "2B", "3B", "SS", "OF"), count=5),
+    ),
+    salary_cap=50_000,
+    salary_floor=0,
+    # DraftKings requires players from both teams here. Left off for the same
+    # reason as the game rule above: it needs a `team` key on every record, and a
+    # preset cannot know the caller supplied one. Add it when yours does:
+    # `GroupConstraint(key="team", min_distinct=2)`.
+    groups=(),
+)
+
+
 PRESETS: dict[str, RosterSpec] = {
     "dk_mlb_classic": DK_MLB_CLASSIC,
+    "dk_mlb_showdown": DK_MLB_SHOWDOWN,
     "dk_nfl_classic": DK_NFL_CLASSIC,
+    "dk_nfl_showdown": DK_NFL_SHOWDOWN,
 }
 """Every preset, by name."""

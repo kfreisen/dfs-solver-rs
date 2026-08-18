@@ -44,9 +44,15 @@ repos:
         pass_filenames: false
         files: ^\.github/workflows/.*\.ya?ml$
 
+      # always_run, and no file filter. A file-triggered version of this hook
+      # cannot catch the case that actually breaks CI: rustfmt changing its mind
+      # between releases makes already-committed files non-conforming without any
+      # .rs file changing, so the hook is skipped on exactly the commits that
+      # need it. `cargo fmt --all` formats the workspace regardless of what is
+      # staged, which is also what the CI step checks -- so the two now agree.
       - id: cargo-fmt
         name: cargo fmt
-        entry: cargo fmt --all --manifest-path rust/Cargo.toml --
+        entry: cargo fmt --all --manifest-path rust/Cargo.toml
         language: system
-        types: [rust]
-        files: ^rust/
+        always_run: true
+        pass_filenames: false

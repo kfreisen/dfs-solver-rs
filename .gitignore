@@ -49,3 +49,6 @@ __marimo__/
 !.env.example
 *.pem
 *.key
+
+# Working notes kept in the repo for convenience, deliberately not tracked.
+SESSION-FINDINGS.md

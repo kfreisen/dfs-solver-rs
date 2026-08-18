@@ -56,9 +56,10 @@ between versions. `task lint` uses the pinned version for the same reason.
 
 ## Benchmarks
 
-`benchmarks/baselines/` holds the *previous* implementation as real, imported,
-tested code. This is the point of the exercise: a speedup claim only means
-something if the slow version still runs and still produces the same answer.
+`benchmarks/baselines/` holds a pure-Python transcription of the same algorithm
+as real, imported, tested code. This is the point of the exercise: a speedup
+claim only means something if the slow version still runs and still produces the
+same answer.
 
 Two rules follow:
 
@@ -67,8 +68,9 @@ Two rules follow:
    change the fast path, this is what catches you having changed its behavior rather
    than its speed.
 2. **CI never asserts on wall-clock time.** Shared runners vary by roughly 2×, and a
-   perf gate that flakes is a perf gate everyone learns to ignore. CI runs the
-   benchmark suite with timing disabled, to prove the benchmark code still executes.
+   perf gate that flakes is a perf gate everyone learns to ignore. CI runs
+   `benchmarks/run.py --smoke` — one scenario at tiny sizes, nothing written — to
+   prove the harness still executes.
 
 Real numbers are produced on a known machine and committed by hand:
 

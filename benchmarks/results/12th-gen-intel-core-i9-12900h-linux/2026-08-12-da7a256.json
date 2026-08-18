@@ -1,0 +1,797 @@
+{
+  "schema": 1,
+  "package": "mlb-dfs-solver",
+  "version": "0.0.1.dev0",
+  "git_sha": "da7a256",
+  "timestamp": "2026-08-12T02:00:01+00:00",
+  "hardware": {
+    "id": "12th-gen-intel-core-i9-12900h-linux",
+    "cpu": "12th Gen Intel(R) Core(TM) i9-12900H",
+    "cores": 20,
+    "ram_gb": 62.5,
+    "os": "Linux 6.17.9-76061709-generic",
+    "python": "3.12.13"
+  },
+  "cases": [
+    {
+      "name": "build/10",
+      "impl": "slatekit_rust",
+      "params": {
+        "num_lineups": 10,
+        "pool": 288,
+        "produced": 10,
+        "requested": 10
+      },
+      "metric": "seconds",
+      "n": 820,
+      "mean": 0.00018708043527312395,
+      "median": 0.00017758150352165103,
+      "stddev": 8.494097640815333e-05,
+      "min": 0.00013031100388616323
+    },
+    {
+      "name": "build/150",
+      "impl": "slatekit_rust",
+      "params": {
+        "num_lineups": 150,
+        "pool": 288,
+        "produced": 150,
+        "requested": 150
+      },
+      "metric": "seconds",
+      "n": 922,
+      "mean": 0.000997411275288563,
+      "median": 0.0009476400446146727,
+      "stddev": 0.00019470173120731074,
+      "min": 0.0008465340360999107
+    },
+    {
+      "name": "build/1000",
+      "impl": "slatekit_rust",
+      "params": {
+        "num_lineups": 1000,
+        "pool": 288,
+        "produced": 1000,
+        "requested": 1000
+      },
+      "metric": "seconds",
+      "n": 161,
+      "mean": 0.006326393342160429,
+      "median": 0.006200458970852196,
+      "stddev": 0.0004304875119929722,
+      "min": 0.005715708946809173
+    },
+    {
+      "name": "build/20000",
+      "impl": "slatekit_rust",
+      "params": {
+        "num_lineups": 20000,
+        "pool": 288,
+        "produced": 15274,
+        "requested": 20000
+      },
+      "metric": "seconds",
+      "n": 9,
+      "mean": 0.11685918768246968,
+      "median": 0.11656362295616418,
+      "stddev": 0.0032789812691158163,
+      "min": 0.11173125507775694
+    },
+    {
+      "name": "build/10",
+      "impl": "reference_python",
+      "params": {
+        "num_lineups": 10,
+        "pool": 288,
+        "produced": 10,
+        "requested": 10
+      },
+      "metric": "seconds",
+      "n": 482,
+      "mean": 0.0017072968030371607,
+      "median": 0.0016997969942167401,
+      "stddev": 6.562703316548329e-05,
+      "min": 0.001544383936561644
+    },
+    {
+      "name": "build/150",
+      "impl": "reference_python",
+      "params": {
+        "num_lineups": 150,
+        "pool": 288,
+        "produced": 150,
+        "requested": 150
+      },
+      "metric": "seconds",
+      "n": 37,
+      "mean": 0.02694798820350017,
+      "median": 0.02678307192400098,
+      "stddev": 0.0007767936094535991,
+      "min": 0.025897635030560195
+    },
+    {
+      "name": "build/1000",
+      "impl": "reference_python",
+      "params": {
+        "num_lineups": 1000,
+        "pool": 288,
+        "produced": 1000,
+        "requested": 1000
+      },
+      "metric": "seconds",
+      "n": 5,
+      "mean": 0.2529067174065858,
+      "median": 0.25232925603631884,
+      "stddev": 0.0010006123579250233,
+      "min": 0.2520759199978784
+    },
+    {
+      "name": "build/10",
+      "impl": "milp_pulp_cbc",
+      "params": {
+        "num_lineups": 10,
+        "pool": 288,
+        "produced": 10,
+        "requested": 10
+      },
+      "metric": "seconds",
+      "n": 2,
+      "mean": 0.7217132889782079,
+      "median": 0.7217132889782079,
+      "stddev": 0.01366503092453468,
+      "min": 0.7120506529463455
+    },
+    {
+      "name": "build/150",
+      "impl": "milp_pulp_cbc",
+      "params": {
+        "num_lineups": 150,
+        "pool": 288,
+        "produced": 150,
+        "requested": 150
+      },
+      "metric": "seconds",
+      "n": 2,
+      "mean": 11.511205156042706,
+      "median": 11.511205156042706,
+      "stddev": 0.088097950182132,
+      "min": 11.448910498060286
+    },
+    {
+      "name": "constraints/bare",
+      "impl": "slatekit_rust",
+      "params": {
+        "rung": "bare",
+        "requested": 25,
+        "produced": 25,
+        "yield": 1.0
+      },
+      "metric": "seconds",
+      "n": 1527,
+      "mean": 0.0003345430425789693,
+      "median": 0.0003217610064893961,
+      "stddev": 9.440653071386678e-05,
+      "min": 0.00026417302433401346,
+      "detail": "salary cap and position slots only"
+    },
+    {
+      "name": "constraints/caps",
+      "impl": "slatekit_rust",
+      "params": {
+        "rung": "caps",
+        "requested": 25,
+        "produced": 25,
+        "yield": 1.0
+      },
+      "metric": "seconds",
+      "n": 2185,
+      "mean": 0.0003517404939761935,
+      "median": 0.000338482903316617,
+      "stddev": 9.455003831931833e-05,
+      "min": 0.00026724301278591156,
+      "detail": "+ team caps (6 total, 5 hitters)"
+    },
+    {
+      "name": "constraints/floor",
+      "impl": "slatekit_rust",
+      "params": {
+        "rung": "floor",
+        "requested": 25,
+        "produced": 25,
+        "yield": 1.0
+      },
+      "metric": "seconds",
+      "n": 2906,
+      "mean": 0.0003500787086745741,
+      "median": 0.0003381235874257982,
+      "stddev": 8.578368577322907e-05,
+      "min": 0.000274188001640141,
+      "detail": "+ salary floor"
+    },
+    {
+      "name": "constraints/games",
+      "impl": "slatekit_rust",
+      "params": {
+        "rung": "games",
+        "requested": 25,
+        "produced": 25,
+        "yield": 1.0
+      },
+      "metric": "seconds",
+      "n": 2344,
+      "mean": 0.00035826643341246346,
+      "median": 0.0003445459879003465,
+      "stddev": 0.0001049762380325818,
+      "min": 0.0002815040061250329,
+      "detail": "+ players from 2 distinct games"
+    },
+    {
+      "name": "constraints/conflicts",
+      "impl": "slatekit_rust",
+      "params": {
+        "rung": "conflicts",
+        "requested": 25,
+        "produced": 25,
+        "yield": 1.0
+      },
+      "metric": "seconds",
+      "n": 1277,
+      "mean": 0.0006048112656241436,
+      "median": 0.0006192859727889299,
+      "stddev": 0.00016217541358698592,
+      "min": 0.0004311540396884084,
+      "detail": "+ no hitters against the rostered pitcher"
+    },
+    {
+      "name": "constraints/stack",
+      "impl": "slatekit_rust",
+      "params": {
+        "rung": "stack",
+        "requested": 25,
+        "produced": 25,
+        "yield": 1.0
+      },
+      "metric": "seconds",
+      "n": 1476,
+      "mean": 0.0006366196530334763,
+      "median": 0.0006525885546579957,
+      "stddev": 0.00013871873802710866,
+      "min": 0.00044999306555837393,
+      "detail": "+ a 4-hitter team stack"
+    },
+    {
+      "name": "constraints/locks",
+      "impl": "slatekit_rust",
+      "params": {
+        "rung": "locks",
+        "requested": 25,
+        "produced": 25,
+        "yield": 1.0
+      },
+      "metric": "seconds",
+      "n": 1493,
+      "mean": 0.0006416721409997652,
+      "median": 0.000659239012748003,
+      "stddev": 0.00012950677580806093,
+      "min": 0.00046382297296077013,
+      "detail": "+ two locked players"
+    },
+    {
+      "name": "constraints/exposure",
+      "impl": "slatekit_rust",
+      "params": {
+        "rung": "exposure",
+        "requested": 25,
+        "produced": 14,
+        "yield": 0.56
+      },
+      "metric": "seconds",
+      "n": 1420,
+      "mean": 0.0008065622371234472,
+      "median": 0.0008523809956386685,
+      "stddev": 0.0001709112765901899,
+      "min": 0.0005482870619744062,
+      "detail": "+ 40% exposure cap on every unlocked player"
+    },
+    {
+      "name": "constraints/bare",
+      "impl": "reference_python",
+      "params": {
+        "rung": "bare",
+        "requested": 25,
+        "produced": 25,
+        "yield": 1.0
+      },
+      "metric": "seconds",
+      "n": 193,
+      "mean": 0.003975132862081838,
+      "median": 0.003948943922296166,
+      "stddev": 0.0002148400308815567,
+      "min": 0.0037088649114593863,
+      "detail": "salary cap and position slots only"
+    },
+    {
+      "name": "constraints/caps",
+      "impl": "reference_python",
+      "params": {
+        "rung": "caps",
+        "requested": 25,
+        "produced": 25,
+        "yield": 1.0
+      },
+      "metric": "seconds",
+      "n": 237,
+      "mean": 0.004138684721038783,
+      "median": 0.0041301531018689275,
+      "stddev": 7.380057702431588e-05,
+      "min": 0.003910202998667955,
+      "detail": "+ team caps (6 total, 5 hitters)"
+    },
+    {
+      "name": "constraints/floor",
+      "impl": "reference_python",
+      "params": {
+        "rung": "floor",
+        "requested": 25,
+        "produced": 25,
+        "yield": 1.0
+      },
+      "metric": "seconds",
+      "n": 220,
+      "mean": 0.004121267659039321,
+      "median": 0.004111703485250473,
+      "stddev": 7.993900253545081e-05,
+      "min": 0.003924804972484708,
+      "detail": "+ salary floor"
+    },
+    {
+      "name": "constraints/games",
+      "impl": "reference_python",
+      "params": {
+        "rung": "games",
+        "requested": 25,
+        "produced": 25,
+        "yield": 1.0
+      },
+      "metric": "seconds",
+      "n": 226,
+      "mean": 0.004545600653679596,
+      "median": 0.004506467026658356,
+      "stddev": 0.00016963979784325454,
+      "min": 0.004249103018082678,
+      "detail": "+ players from 2 distinct games"
+    },
+    {
+      "name": "constraints/conflicts",
+      "impl": "reference_python",
+      "params": {
+        "rung": "conflicts",
+        "requested": 25,
+        "produced": 25,
+        "yield": 1.0
+      },
+      "metric": "seconds",
+      "n": 142,
+      "mean": 0.006976318384953578,
+      "median": 0.006962522980757058,
+      "stddev": 0.0001210021896535265,
+      "min": 0.006704957922920585,
+      "detail": "+ no hitters against the rostered pitcher"
+    },
+    {
+      "name": "constraints/stack",
+      "impl": "reference_python",
+      "params": {
+        "rung": "stack",
+        "requested": 25,
+        "produced": 25,
+        "yield": 1.0
+      },
+      "metric": "seconds",
+      "n": 111,
+      "mean": 0.009122742762629714,
+      "median": 0.009114551008678973,
+      "stddev": 0.00013960438181711963,
+      "min": 0.008746382081881166,
+      "detail": "+ a 4-hitter team stack"
+    },
+    {
+      "name": "constraints/locks",
+      "impl": "reference_python",
+      "params": {
+        "rung": "locks",
+        "requested": 25,
+        "produced": 25,
+        "yield": 1.0
+      },
+      "metric": "seconds",
+      "n": 74,
+      "mean": 0.013591587840818573,
+      "median": 0.013553609023801982,
+      "stddev": 0.00018617486952245254,
+      "min": 0.013229742995463312,
+      "detail": "+ two locked players"
+    },
+    {
+      "name": "constraints/exposure",
+      "impl": "reference_python",
+      "params": {
+        "rung": "exposure",
+        "requested": 25,
+        "produced": 14,
+        "yield": 0.56
+      },
+      "metric": "seconds",
+      "n": 18,
+      "mean": 0.05600507561272631,
+      "median": 0.05601346545154229,
+      "stddev": 0.0003660032101525516,
+      "min": 0.05541288398671895,
+      "detail": "+ 40% exposure cap on every unlocked player"
+    },
+    {
+      "name": "constraints/bare",
+      "impl": "milp_ortools_cpsat",
+      "params": {
+        "rung": "bare",
+        "requested": 25,
+        "produced": 25,
+        "yield": 1.0
+      },
+      "metric": "seconds",
+      "n": 2,
+      "mean": 0.36705149052431807,
+      "median": 0.36705149052431807,
+      "stddev": 0.09496398609492307,
+      "min": 0.29990181198809296,
+      "detail": "salary cap and position slots only"
+    },
+    {
+      "name": "constraints/caps",
+      "impl": "milp_ortools_cpsat",
+      "params": {
+        "rung": "caps",
+        "requested": 25,
+        "produced": 25,
+        "yield": 1.0
+      },
+      "metric": "seconds",
+      "n": 2,
+      "mean": 0.5451431365218014,
+      "median": 0.5451431365218014,
+      "stddev": 0.00025056959984234487,
+      "min": 0.5449659570585936,
+      "detail": "+ team caps (6 total, 5 hitters)"
+    },
+    {
+      "name": "constraints/floor",
+      "impl": "milp_ortools_cpsat",
+      "params": {
+        "rung": "floor",
+        "requested": 25,
+        "produced": 25,
+        "yield": 1.0
+      },
+      "metric": "seconds",
+      "n": 2,
+      "mean": 0.5598710120539181,
+      "median": 0.5598710120539181,
+      "stddev": 0.011585916350780148,
+      "min": 0.5516785320360214,
+      "detail": "+ salary floor"
+    },
+    {
+      "name": "constraints/games",
+      "impl": "milp_ortools_cpsat",
+      "params": {
+        "rung": "games",
+        "requested": 25,
+        "produced": 25,
+        "yield": 1.0
+      },
+      "metric": "seconds",
+      "n": 2,
+      "mean": 0.6114191199885681,
+      "median": 0.6114191199885681,
+      "stddev": 0.02103127477275809,
+      "min": 0.5965477629797533,
+      "detail": "+ players from 2 distinct games"
+    },
+    {
+      "name": "constraints/conflicts",
+      "impl": "milp_ortools_cpsat",
+      "params": {
+        "rung": "conflicts",
+        "requested": 25,
+        "produced": 25,
+        "yield": 1.0
+      },
+      "metric": "seconds",
+      "n": 2,
+      "mean": 0.8466359304729849,
+      "median": 0.8466359304729849,
+      "stddev": 0.013899841965891314,
+      "min": 0.8368072579614818,
+      "detail": "+ no hitters against the rostered pitcher"
+    },
+    {
+      "name": "constraints/stack",
+      "impl": "milp_ortools_cpsat",
+      "params": {
+        "rung": "stack",
+        "requested": 25,
+        "produced": 25,
+        "yield": 1.0
+      },
+      "metric": "seconds",
+      "n": 2,
+      "mean": 3.795617432508152,
+      "median": 3.795617432508152,
+      "stddev": 0.01696192550854247,
+      "min": 3.7836235399590805,
+      "detail": "+ a 4-hitter team stack"
+    },
+    {
+      "name": "constraints/locks",
+      "impl": "milp_ortools_cpsat",
+      "params": {
+        "rung": "locks",
+        "requested": 25,
+        "produced": 25,
+        "yield": 1.0
+      },
+      "metric": "seconds",
+      "n": 2,
+      "mean": 1.8841999180149287,
+      "median": 1.8841999180149287,
+      "stddev": 0.025574034314651085,
+      "min": 1.8661163449287415,
+      "detail": "+ two locked players"
+    },
+    {
+      "name": "constraints/exposure",
+      "impl": "milp_ortools_cpsat",
+      "params": {
+        "rung": "exposure",
+        "requested": 25,
+        "produced": 25,
+        "yield": 1.0
+      },
+      "metric": "seconds",
+      "n": 2,
+      "mean": 1.1862421129480936,
+      "median": 1.1862421129480936,
+      "stddev": 0.007698579815902033,
+      "min": 1.1807983949547634,
+      "detail": "+ 40% exposure cap on every unlocked player"
+    },
+    {
+      "name": "pipeline/150-entry tournament",
+      "impl": "slatekit_rust",
+      "params": {
+        "requested": 150,
+        "produced": 150
+      },
+      "metric": "seconds",
+      "n": 7,
+      "mean": 0.1623744344105944,
+      "median": 0.16203642799519002,
+      "stddev": 0.0034134053188817092,
+      "min": 0.15890511393081397,
+      "detail": "150 entries against a 93,982-entry field, paying the top 0.1%",
+      "quality": {
+        "optimum": 115.65,
+        "field_entries": 93982,
+        "entries": 150,
+        "median_ratio": 0.9355,
+        "best_ratio": 0.9822,
+        "p_in_the_money": 0.841,
+        "overlap": 0.3572
+      }
+    },
+    {
+      "name": "pipeline/150-entry tournament",
+      "impl": "milp_ortools_cpsat",
+      "params": {
+        "requested": 150,
+        "produced": 150
+      },
+      "metric": "seconds",
+      "n": 2,
+      "mean": 5.061791701475158,
+      "median": 5.061791701475158,
+      "stddev": 0.03217355298452225,
+      "min": 5.039041563984938,
+      "detail": "150 entries against a 93,982-entry field, paying the top 0.1%",
+      "quality": {
+        "optimum": 115.65,
+        "field_entries": 93982,
+        "entries": 150,
+        "median_ratio": 1.0,
+        "best_ratio": 1.0,
+        "p_in_the_money": 0.421,
+        "overlap": 0.5492
+      }
+    },
+    {
+      "name": "pipeline/head-to-head",
+      "impl": "slatekit_rust",
+      "params": {},
+      "metric": "quality",
+      "n": 1,
+      "mean": 2.230517566204071e-07,
+      "median": 2.230517566204071e-07,
+      "stddev": 0,
+      "min": 2.230517566204071e-07,
+      "quality": {
+        "ours_entries": 150,
+        "ours_median_ratio": 0.9355,
+        "ours_best_ratio": 0.9822,
+        "ours_p_in_the_money": 0.841,
+        "ours_overlap": 0.3572,
+        "solver_entries": 150,
+        "solver_median_ratio": 1.0,
+        "solver_best_ratio": 1.0,
+        "solver_p_in_the_money": 0.421,
+        "solver_overlap": 0.5492
+      }
+    },
+    {
+      "name": "quality/floor",
+      "impl": "slatekit_rust",
+      "params": {},
+      "metric": "quality",
+      "n": 1,
+      "mean": 2.1106097847223282e-07,
+      "median": 2.1106097847223282e-07,
+      "stddev": 0,
+      "min": 2.1106097847223282e-07,
+      "detail": "+ salary floor",
+      "quality": {
+        "lineups": 150,
+        "optimum": 115.65,
+        "best_ratio": 0.9639,
+        "median_ratio": 0.9094,
+        "worst_ratio": 0.8552,
+        "median_percentile": 95.1,
+        "p10_percentile": 78.3,
+        "population": 2000,
+        "self_overlap": 0.5168,
+        "self_overlap_matched": 0.5168,
+        "solver_self_overlap": 0.5492,
+        "matched_size": 150,
+        "overlap_with_solver": 0.1004,
+        "identical_to_solver": 0
+      }
+    },
+    {
+      "name": "quality/stack",
+      "impl": "slatekit_rust",
+      "params": {},
+      "metric": "quality",
+      "n": 1,
+      "mean": 2.4598557502031326e-07,
+      "median": 2.4598557502031326e-07,
+      "stddev": 0,
+      "min": 2.4598557502031326e-07,
+      "detail": "+ a 4-hitter team stack",
+      "quality": {
+        "lineups": 150,
+        "optimum": 115.65,
+        "best_ratio": 0.9458,
+        "median_ratio": 0.8732,
+        "worst_ratio": 0.7467,
+        "median_percentile": 93.05,
+        "p10_percentile": 60.9,
+        "population": 2000,
+        "self_overlap": 0.3,
+        "self_overlap_matched": 0.3,
+        "solver_self_overlap": 0.5201,
+        "matched_size": 150,
+        "overlap_with_solver": 0.1154,
+        "identical_to_solver": 0
+      }
+    },
+    {
+      "name": "quality/profiles",
+      "impl": "slatekit_rust",
+      "params": {},
+      "metric": "quality",
+      "n": 1,
+      "mean": 2.450542524456978e-07,
+      "median": 2.450542524456978e-07,
+      "stddev": 0,
+      "min": 2.450542524456978e-07,
+      "quality": {
+        "standard_ownership": 0.1134,
+        "contrarian_ownership": 0.1117
+      }
+    },
+    {
+      "name": "selection/floor",
+      "impl": "slatekit_rust",
+      "params": {},
+      "metric": "quality",
+      "n": 1,
+      "mean": 2.5203917175531387e-07,
+      "median": 2.5203917175531387e-07,
+      "stddev": 0,
+      "min": 2.5203917175531387e-07,
+      "detail": "+ salary floor",
+      "quality": {
+        "candidates": 11391,
+        "field_entries": 93982,
+        "optimum": 115.65,
+        "p_top_0.2_selected": 1.0,
+        "p_top_0.01_selected": 0.967,
+        "p_top_0.001_selected": 0.811,
+        "unselected_n": 150,
+        "unselected_median_ratio": 0.9094,
+        "unselected_worst_ratio": 0.8552,
+        "unselected_best_ratio": 0.9639,
+        "unselected_p_any_wins": 0.095,
+        "unselected_overlap": 0.5168,
+        "selected_n": 150,
+        "selected_median_ratio": 0.928,
+        "selected_worst_ratio": 0.8735,
+        "selected_best_ratio": 0.9822,
+        "selected_p_any_wins": 0.811,
+        "selected_overlap": 0.3711
+      }
+    },
+    {
+      "name": "selection/stack",
+      "impl": "slatekit_rust",
+      "params": {},
+      "metric": "quality",
+      "n": 1,
+      "mean": 3.180466592311859e-07,
+      "median": 3.180466592311859e-07,
+      "stddev": 0,
+      "min": 3.180466592311859e-07,
+      "detail": "+ a 4-hitter team stack",
+      "quality": {
+        "candidates": 4000,
+        "field_entries": 93982,
+        "optimum": 115.65,
+        "p_top_0.2_selected": 1.0,
+        "p_top_0.01_selected": 0.923,
+        "p_top_0.001_selected": 0.764,
+        "unselected_n": 150,
+        "unselected_median_ratio": 0.8732,
+        "unselected_worst_ratio": 0.7467,
+        "unselected_best_ratio": 0.9458,
+        "unselected_p_any_wins": 0.285,
+        "unselected_overlap": 0.3,
+        "selected_n": 150,
+        "selected_median_ratio": 0.9091,
+        "selected_worst_ratio": 0.8007,
+        "selected_best_ratio": 0.9819,
+        "selected_p_any_wins": 0.764,
+        "selected_overlap": 0.2177
+      }
+    },
+    {
+      "name": "selection/modes",
+      "impl": "slatekit_rust",
+      "params": {},
+      "metric": "quality",
+      "n": 1,
+      "mean": 2.949964255094528e-07,
+      "median": 2.949964255094528e-07,
+      "stddev": 0,
+      "min": 2.949964255094528e-07,
+      "quality": {
+        "field_entries": 93982,
+        "matched_size": 150,
+        "median_cash_line": 103.56,
+        "median_win_line": 139.22,
+        "win_line_spread": 67.24,
+        "cash_mode_entry_cash_rate": 0.7343,
+        "gpp_mode_entry_cash_rate": 0.6043,
+        "cash_mode_p_any_wins": 0.331,
+        "gpp_mode_p_any_wins": 0.811
+      }
+    }
+  ]
+}

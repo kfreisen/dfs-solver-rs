@@ -25,9 +25,16 @@ from __future__ import annotations
 import numpy as np
 import pytest
 from baselines.reference import build_lineups_reference, is_valid, validity_report
-from mlb_dfs_solver import build_lineups
+from mlb_dfs_solver import (
+    build_lineups,
+    field_line,
+    portfolio_value,
+    score_lineups,
+    select_portfolio,
+    tail_line,
+)
 from mlb_dfs_solver.pool import PlayerPool
-from mlb_dfs_solver.spec import RosterSpec
+from mlb_dfs_solver.spec import GroupConstraint, RosterSpec
 
 
 def test_kernel_lineups_are_all_valid(tiny_pool: PlayerPool, tiny_spec: RosterSpec) -> None:
@@ -124,8 +131,8 @@ def test_both_let_the_objective_drive_selection(mlb_pool: PlayerPool, mlb_spec: 
     scrambled = build_lineups(mlb_pool, mlb_spec, num_lineups=100, seed=13, noise=50.0)
     assert len(signal) > 0
     assert len(scrambled) > 0
-    assert float(mlb_pool.projection_of(signal).mean()) > float(
-        mlb_pool.projection_of(scrambled).mean()
+    assert float(mlb_pool.projection_of(signal, mlb_spec).mean()) > float(
+        mlb_pool.projection_of(scrambled, mlb_spec).mean()
     )
 
     ref_signal = build_lineups_reference(mlb_pool, mlb_spec, num_lineups=30, seed=13, noise=0.0)
@@ -151,7 +158,7 @@ def test_both_respond_to_a_tightening_cap(
     reference = build_lineups_reference(mlb_pool, spec, num_lineups=40, seed=17)
 
     if len(kernel):
-        assert int(mlb_pool.salary_of(kernel).max()) <= cap
+        assert int(mlb_pool.salary_of(kernel, spec).max()) <= cap
     for lineup in reference:
         assert sum(int(mlb_pool.salaries[i]) for i in lineup) <= cap
 
@@ -184,3 +191,404 @@ def test_both_honour_a_salary_floor_that_forces_repair(
         sum(int(mlb_pool.salaries[i]) for i in lineup) >= mlb_spec.salary_floor
         for lineup in reference
     )
+
+
+# --- Slot multipliers and conflicts --------------------------------------
+
+
+def showdown_spec() -> RosterSpec:
+    """A single-game shape over the tiny fixture's positions."""
+    from mlb_dfs_solver.spec import Slot
+
+    return RosterSpec(
+        positions=("P", "C", "OF"),
+        slots=(
+            Slot("CPT", ("P", "C", "OF"), score_multiplier=1.5, salary_multiplier=1.5),
+            Slot("FLEX", ("P", "C", "OF"), count=3),
+        ),
+        salary_cap=30_000,
+        salary_floor=0,
+    )
+
+
+def test_both_price_a_captain_slot_the_same_way(tiny_pool: PlayerPool) -> None:
+    """A multiplier the two implementations disagreed about would be invisible.
+
+    The kernel would call a lineup legal and the oracle would call it over the
+    cap, or worse, both would agree on a number neither the operator nor the
+    reader recognises. So the check is against the independent validator.
+    """
+    spec = showdown_spec()
+    kernel = build_lineups(tiny_pool, spec, num_lineups=60, seed=21)
+    reference = build_lineups_reference(tiny_pool, spec, num_lineups=60, seed=21)
+    assert len(kernel) > 0
+    assert reference
+    assert validity_report(kernel, tiny_pool, spec) == ""
+    for lineup in reference:
+        assert is_valid(lineup, tiny_pool, spec), lineup
+
+
+def test_both_build_comparably_many_showdown_lineups(tiny_pool: PlayerPool) -> None:
+    # Different RNGs mean different lineups, but a multiplier applied in one
+    # implementation and not the other would show up as one of them finding far
+    # fewer lineups under the same cap.
+    spec = showdown_spec()
+    kernel = build_lineups(tiny_pool, spec, num_lineups=80, seed=22)
+    reference = build_lineups_reference(tiny_pool, spec, num_lineups=80, seed=22)
+    assert 0.5 <= len(kernel) / max(len(reference), 1) <= 2.0
+
+
+def opposed_pool(spec: RosterSpec) -> PlayerPool:
+    """A pool carrying both a team and an opponent, four teams paired off."""
+    records: list[dict[str, object]] = []
+    for position in ("P", "C", "OF"):
+        for k in range(8):
+            team = k % 4
+            records.append(
+                {
+                    "name": f"{position}{k}",
+                    "positions": (position,),
+                    "salary": 3000 + k * 600,
+                    "projection": 5.0 + k * 1.5,
+                    "stddev": 2.0 + (k % 3),
+                    "team": f"T{team}",
+                    "opponent": f"T{team ^ 1}",
+                }
+            )
+    return PlayerPool.from_records(records, spec, key_fields=["team", "opponent"])
+
+
+def test_both_enforce_a_conflict_rule(tiny_spec: RosterSpec) -> None:
+    from dataclasses import replace
+
+    from mlb_dfs_solver.spec import ConflictRule
+
+    spec = replace(
+        tiny_spec,
+        conflicts=(ConflictRule(left_key="opponent", right_key="team", left_positions=("P",)),),
+    )
+    pool = opposed_pool(spec)
+    kernel = build_lineups(pool, spec, num_lineups=60, seed=23)
+    reference = build_lineups_reference(pool, spec, num_lineups=60, seed=23)
+    assert len(kernel) > 0
+    assert reference
+    assert validity_report(kernel, pool, spec) == ""
+    for lineup in reference:
+        assert is_valid(lineup, pool, spec), lineup
+
+
+def test_both_enforce_explicit_conflict_pairs(tiny_pool: PlayerPool, tiny_spec: RosterSpec) -> None:
+    pairs = [(0, 8), (1, 9)]
+    kernel = build_lineups(tiny_pool, tiny_spec, num_lineups=60, seed=24, conflict_pairs=pairs)
+    reference = build_lineups_reference(
+        tiny_pool, tiny_spec, num_lineups=60, seed=24, extra_conflict_pairs=pairs
+    )
+    assert len(kernel) > 0
+    assert reference
+    assert validity_report(kernel, tiny_pool, tiny_spec, extra_conflict_pairs=pairs) == ""
+    for lineup in reference:
+        assert is_valid(lineup, tiny_pool, tiny_spec, extra_conflict_pairs=pairs), lineup
+
+
+def test_both_enforce_conflicts_through_salary_repair(tiny_spec: RosterSpec) -> None:
+    """Repair is where conflict bookkeeping is easiest to get wrong.
+
+    It removes a player, searches for a replacement, and must restore the marks
+    exactly on failure. A leak produces lineups the fill loop would never build,
+    and only a floor tight enough to force repair reaches that code.
+    """
+    from dataclasses import replace
+
+    from mlb_dfs_solver.spec import ConflictRule
+
+    spec = replace(
+        tiny_spec,
+        salary_cap=22_000,
+        salary_floor=20_000,
+        conflicts=(ConflictRule(left_key="opponent", right_key="team", left_positions=("P",)),),
+    )
+    pool = opposed_pool(spec)
+    kernel = build_lineups(pool, spec, num_lineups=60, seed=25)
+    reference = build_lineups_reference(pool, spec, num_lineups=60, seed=25)
+    assert len(kernel) > 0, "repair recovered nothing to check"
+    assert reference
+    assert validity_report(kernel, pool, spec) == ""
+    for lineup in reference:
+        assert is_valid(lineup, pool, spec), lineup
+
+
+# --- Locks and exposure caps ---------------------------------------------
+
+
+def test_both_honour_the_same_locks(tiny_pool: PlayerPool, tiny_spec: RosterSpec) -> None:
+    locks = [9, 17]
+    kernel = build_lineups(tiny_pool, tiny_spec, num_lineups=40, seed=31, locks=locks)
+    reference = build_lineups_reference(tiny_pool, tiny_spec, num_lineups=40, seed=31, locks=locks)
+    assert len(kernel) > 0
+    assert reference
+    assert validity_report(kernel, tiny_pool, tiny_spec) == ""
+    for lineup in kernel.tolist():
+        assert set(locks) <= set(lineup)
+    for lineup in reference:
+        assert is_valid(lineup, tiny_pool, tiny_spec), lineup
+        assert set(locks) <= set(lineup)
+
+
+def test_both_place_locks_in_the_same_slots(tiny_pool: PlayerPool, tiny_spec: RosterSpec) -> None:
+    # The slot a lock lands in is decided by assign_locks, which both call, so
+    # the two must agree on the column even though they disagree on the rest.
+    locks = [9, 17]
+    kernel = build_lineups(tiny_pool, tiny_spec, num_lineups=20, seed=31, locks=locks)
+    reference = build_lineups_reference(tiny_pool, tiny_spec, num_lineups=20, seed=31, locks=locks)
+    assert all(lineup[0] == 9 and lineup[1] == 17 for lineup in kernel.tolist())
+    assert all(lineup[0] == 9 and lineup[1] == 17 for lineup in reference)
+
+
+def test_both_honour_locks_through_salary_repair(
+    tiny_pool: PlayerPool, tiny_spec: RosterSpec
+) -> None:
+    from dataclasses import replace
+
+    spec = replace(tiny_spec, salary_cap=22_000, salary_floor=20_000)
+    kernel = build_lineups(tiny_pool, spec, num_lineups=40, seed=32, locks=[8])
+    reference = build_lineups_reference(tiny_pool, spec, num_lineups=40, seed=32, locks=[8])
+    assert len(kernel) > 0, "repair recovered nothing to check"
+    assert reference
+    assert validity_report(kernel, tiny_pool, spec) == ""
+    assert all(8 in lineup for lineup in kernel.tolist())
+    for lineup in reference:
+        assert is_valid(lineup, tiny_pool, spec), lineup
+        assert 8 in lineup
+
+
+def test_both_return_nothing_for_a_lock_that_cannot_fit(
+    tiny_pool: PlayerPool, tiny_spec: RosterSpec
+) -> None:
+    from dataclasses import replace
+
+    spec = replace(tiny_spec, groups=(GroupConstraint(key="team", max_count=1),))
+    assert len(build_lineups(tiny_pool, spec, num_lineups=20, seed=33, locks=[16, 20])) == 0
+    assert build_lineups_reference(tiny_pool, spec, num_lineups=20, seed=33, locks=[16, 20]) == []
+
+
+def test_both_respect_the_same_exposure_cap(tiny_pool: PlayerPool, tiny_spec: RosterSpec) -> None:
+    kernel = build_lineups(tiny_pool, tiny_spec, num_lineups=40, seed=34, max_exposure=0.25)
+    reference = build_lineups_reference(
+        tiny_pool, tiny_spec, num_lineups=40, seed=34, max_exposure=0.25
+    )
+    assert len(kernel) > 0
+    assert reference
+    assert validity_report(kernel, tiny_pool, tiny_spec) == ""
+    # 25% of the 40 requested is 10, for both, whatever each actually returned.
+    for player in range(len(tiny_pool)):
+        assert sum(player in lineup for lineup in kernel.tolist()) <= 10
+        assert sum(player in lineup for lineup in reference) <= 10
+
+
+def test_both_exclude_a_player_capped_at_zero(tiny_pool: PlayerPool, tiny_spec: RosterSpec) -> None:
+    kernel = build_lineups(tiny_pool, tiny_spec, num_lineups=30, seed=35, max_exposure={15: 0.0})
+    reference = build_lineups_reference(
+        tiny_pool, tiny_spec, num_lineups=30, seed=35, max_exposure={15: 0.0}
+    )
+    assert len(kernel) > 0
+    assert reference
+    assert all(15 not in lineup for lineup in kernel.tolist())
+    assert all(15 not in lineup for lineup in reference)
+
+
+# --- Minimums ------------------------------------------------------------
+
+
+def test_both_meet_the_same_distinct_minimum(tiny_pool: PlayerPool, tiny_spec: RosterSpec) -> None:
+    from dataclasses import replace
+
+    spec = replace(tiny_spec, groups=(GroupConstraint(key="team", min_distinct=3),))
+    kernel = build_lineups(tiny_pool, spec, num_lineups=50, seed=51)
+    reference = build_lineups_reference(tiny_pool, spec, num_lineups=50, seed=51)
+    assert len(kernel) > 0
+    assert reference
+    assert validity_report(kernel, tiny_pool, spec) == ""
+    for lineup in reference:
+        assert is_valid(lineup, tiny_pool, spec), lineup
+
+
+def test_both_meet_the_same_stack_minimum(tiny_pool: PlayerPool, tiny_spec: RosterSpec) -> None:
+    from dataclasses import replace
+
+    spec = replace(tiny_spec, groups=(GroupConstraint(key="team", min_stack=3),))
+    kernel = build_lineups(tiny_pool, spec, num_lineups=50, seed=52)
+    reference = build_lineups_reference(tiny_pool, spec, num_lineups=50, seed=52)
+    assert len(kernel) > 0
+    assert reference
+    assert validity_report(kernel, tiny_pool, spec) == ""
+    for lineup in reference:
+        assert is_valid(lineup, tiny_pool, spec), lineup
+
+
+def test_both_meet_the_same_stack_pair(tiny_pool: PlayerPool, tiny_spec: RosterSpec) -> None:
+    from dataclasses import replace
+
+    spec = replace(
+        tiny_spec, groups=(GroupConstraint(key="team", min_stack=2, secondary_min_stack=2),)
+    )
+    kernel = build_lineups(tiny_pool, spec, num_lineups=40, seed=54)
+    reference = build_lineups_reference(tiny_pool, spec, num_lineups=40, seed=54)
+    assert len(kernel) > 0
+    assert reference
+    assert validity_report(kernel, tiny_pool, spec) == ""
+    for lineup in reference:
+        assert is_valid(lineup, tiny_pool, spec), lineup
+
+
+def test_both_spread_their_stacks(tiny_pool: PlayerPool, tiny_spec: RosterSpec) -> None:
+    """Neither may answer "which team?" the same way every attempt.
+
+    The two draw from different generators, so they will not choose the same
+    teams — but a portfolio concentrated on one team is a failure of the
+    mechanism, and that is checkable on both.
+    """
+    from dataclasses import replace
+
+    spec = replace(tiny_spec, groups=(GroupConstraint(key="team", min_stack=3),))
+
+    def stacked_teams(lineups: list[list[int]]) -> set[int]:
+        out = set()
+        for lineup in lineups:
+            counts: dict[int, int] = {}
+            for p in lineup:
+                key = int(tiny_pool.keys["team"][p])
+                counts[key] = counts.get(key, 0) + 1
+            out.add(max(counts, key=lambda k: counts[k]))
+        return out
+
+    kernel = build_lineups(tiny_pool, spec, num_lineups=60, seed=53)
+    reference = build_lineups_reference(tiny_pool, spec, num_lineups=60, seed=53)
+    assert len(stacked_teams(kernel.tolist())) > 1
+    assert len(stacked_teams(reference)) > 1
+
+
+def test_both_meet_minimums_through_salary_repair(
+    tiny_pool: PlayerPool, tiny_spec: RosterSpec
+) -> None:
+    from dataclasses import replace
+
+    spec = replace(
+        tiny_spec,
+        salary_cap=22_000,
+        salary_floor=20_000,
+        groups=(
+            GroupConstraint(key="team", min_stack=2),
+            GroupConstraint(key="team", min_distinct=2),
+        ),
+    )
+    kernel = build_lineups(tiny_pool, spec, num_lineups=50, seed=54)
+    reference = build_lineups_reference(tiny_pool, spec, num_lineups=50, seed=54)
+    assert len(kernel) > 0, "repair recovered nothing to check"
+    assert reference
+    assert validity_report(kernel, tiny_pool, spec) == ""
+    for lineup in reference:
+        assert is_valid(lineup, tiny_pool, spec), lineup
+
+
+def test_both_return_nothing_for_a_stack_the_pool_cannot_supply(
+    tiny_spec: RosterSpec,
+) -> None:
+    from dataclasses import replace
+
+    from conftest import make_records
+
+    records = [{**r, "team": f"T{i}"} for i, r in enumerate(make_records())]
+    pool = PlayerPool.from_records(records, tiny_spec)
+    spec = replace(tiny_spec, groups=(GroupConstraint(key="team", min_stack=2),))
+    assert len(build_lineups(pool, spec, num_lineups=20, seed=55)) == 0
+    assert build_lineups_reference(pool, spec, num_lineups=20, seed=55) == []
+
+
+# --- Portfolio selection -------------------------------------------------
+
+
+def selection_universe(pool: PlayerPool, seed: int = 3) -> np.ndarray:
+    """Correlated simulated scores for every player."""
+    rng = np.random.default_rng(seed)
+    teams = pool.keys["team"]
+    n_sims = 300
+    shock = rng.standard_normal((int(teams.max()) + 1, n_sims)) * 0.6
+    noise = rng.standard_normal((len(pool), n_sims))
+    return pool.projections[:, None] + pool.stddevs[:, None] * (noise + shock[teams])
+
+
+@pytest.mark.parametrize("mode", ["cash", "gpp", "excess"])
+def test_selection_matches_the_reference_exactly(
+    tiny_pool: PlayerPool, tiny_spec: RosterSpec, mode: str
+) -> None:
+    """Selection is held to *identical* output, not merely comparable.
+
+    Construction cannot be: matching it lineup-for-lineup would mean
+    reimplementing xoshiro256++ in Python. Selection has no generator in it at
+    all — it is a deterministic function of the score matrix — so the strongest
+    possible parity assertion is available, and anything weaker would be leaving
+    a real check on the table.
+    """
+    from baselines.selection import select_portfolio_reference
+
+    candidates = build_lineups(tiny_pool, tiny_spec, num_lineups=300, seed=5)
+    sim = score_lineups(tiny_pool, tiny_spec, candidates, selection_universe(tiny_pool))
+    line = tail_line(sim, 0.5 if mode == "cash" else 0.95)
+
+    kernel = select_portfolio(sim, mode=mode, line=line, n_select=30)
+    reference = select_portfolio_reference(sim, mode=mode, line=line, n_select=30)
+    assert kernel.tolist() == reference
+
+
+def test_selection_matches_the_reference_under_exposure_caps(
+    tiny_pool: PlayerPool, tiny_spec: RosterSpec
+) -> None:
+    from baselines.selection import select_portfolio_reference
+
+    candidates = build_lineups(tiny_pool, tiny_spec, num_lineups=300, seed=5)
+    sim = score_lineups(tiny_pool, tiny_spec, candidates, selection_universe(tiny_pool))
+
+    shared = {
+        "mode": "excess",
+        "line": 0.0,
+        "n_select": 25,
+        "lineups": candidates,
+        "max_exposure": 0.3,
+        "n_players": len(tiny_pool),
+    }
+    kernel = select_portfolio(sim, **shared)  # type: ignore[arg-type]
+    reference = select_portfolio_reference(sim, **shared)  # type: ignore[arg-type]
+    assert kernel.tolist() == reference
+
+
+def test_portfolio_value_matches_the_reference(
+    tiny_pool: PlayerPool, tiny_spec: RosterSpec
+) -> None:
+    from baselines.selection import portfolio_value_reference
+
+    candidates = build_lineups(tiny_pool, tiny_spec, num_lineups=200, seed=5)
+    sim = score_lineups(tiny_pool, tiny_spec, candidates, selection_universe(tiny_pool))
+    chosen = select_portfolio(sim, mode="excess", line=0.0, n_select=20)
+    assert portfolio_value(sim, chosen) == pytest.approx(
+        portfolio_value_reference(sim, chosen), rel=1e-5
+    )
+
+
+def test_selection_matches_the_reference_with_a_per_outcome_line(
+    tiny_pool: PlayerPool, tiny_spec: RosterSpec
+) -> None:
+    """A per-outcome line is the normal case, so parity has to cover it.
+
+    A constant line is a special case that happens to broadcast; testing only
+    that would leave the path everyone actually uses unchecked.
+    """
+    from baselines.selection import select_portfolio_reference
+
+    candidates = build_lineups(tiny_pool, tiny_spec, num_lineups=300, seed=5)
+    sim = score_lineups(tiny_pool, tiny_spec, candidates, selection_universe(tiny_pool))
+    line = field_line(sim, 0.9)
+
+    for mode in ("cash", "gpp", "excess"):
+        kernel = select_portfolio(sim, mode=mode, line=line, n_select=25)
+        reference = select_portfolio_reference(sim, mode=mode, line=line, n_select=25)
+        assert kernel.tolist() == reference, mode

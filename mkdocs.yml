@@ -69,6 +69,8 @@ markdown_extensions:
 
 nav:
   - Overview: index.md
+  - How it works: concepts.md
+  - Recipes: recipes.md
   - Benchmarks: benchmarks.md
   - Examples: examples.md
   - API: api.md

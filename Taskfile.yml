@@ -50,15 +50,18 @@ tasks:
       - uv run mypy
 
   bench:
-    desc: 'Full benchmark run: writes benchmarks/results/.'
+    desc: 'Full benchmark run: writes benchmarks/results/. Long — see benchmarks/README.md.'
     cmds:
-      - uv run --group bench pytest benchmarks/ --benchmark-json=.benchmark.json --benchmark-only
-      - uv run --no-project --python 3.12 --with psutil tools/bench_report.py .benchmark.json --write
+      # Not pytest. These are long by design and a test runner is the wrong home
+      # for them: it put the suite in CI on every push and pinned the portfolio
+      # size to whatever a solver could finish inside a test session.
+      - uv run --group bench python benchmarks/run.py
+      - uv run --no-project --python 3.12 tools/bench_report.py --write
 
   bench-quick:
-    desc: Smoke-run the benchmarks, no timings recorded.
+    desc: Prove the benchmark harness executes. No timings, nothing written.
     cmds:
-      - uv run --group bench pytest benchmarks/ -q --benchmark-disable
+      - uv run --group bench python benchmarks/run.py --smoke
 
   examples:
     desc: Execute every marimo example.

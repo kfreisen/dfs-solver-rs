@@ -8,10 +8,38 @@ The two rules a daily-fantasy contest usually states as separate features — "a
 6 players from one team" and "at most 5 *hitters* from one team" — are the same
 constraint here, differing only in which slots they count. That collapse is the
 reason this generalizes past the sport it came from.
+
+Several shapes do not collapse into a group cap, and each gets its own mechanism:
+
+* A **showdown captain** is worth more and costs more than the same player in a
+  flex slot, so [`Slot`][mlb_dfs_solver.spec.Slot] carries score and salary
+  multipliers.
+* **"No hitters against my starting pitcher"** depends on a *pair* of players — the
+  pitcher's opponent matching the hitter's team — which is a join rather than a
+  grouping. [`ConflictRule`][mlb_dfs_solver.spec.ConflictRule] expresses it, and
+  nothing turns it on unless you ask: it is a preference, not a contest rule, and
+  a contrarian who wants that correlation is entitled to it.
+* **"Players from at least two different games"** counts how many key values are
+  used rather than how many players share one, so it is
+  `GroupConstraint(min_distinct=...)`. Most classic contests enforce this at
+  entry.
+* **"At least four hitters from one team"** — a stack — is
+  `GroupConstraint(min_stack=...)`, and is the odd one out. Every other rule here
+  is a property a finished lineup either has or does not, testable one player at
+  a time. A stack is existential: it asks that *some* team be well represented
+  without saying which, so the builder has to choose one before it can act.
+
+  It chooses per attempt, uniformly among the teams that could actually supply
+  the players, drawing from the same generator as the jitter. That is what makes
+  a portfolio come back stacked across many teams rather than piling every
+  lineup onto whichever team the builder happened to prefer. Within a slot the
+  stack is filled from the best available players of the chosen team, not from
+  whatever is left over once the rest of the roster is set.
 """
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -19,10 +47,13 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
 
 __all__ = [
+    "UNCAPPED",
+    "ConflictRule",
     "GroupConstraint",
     "RosterSpec",
     "Slot",
     "positions_to_mask",
+    "scaled_salary",
 ]
 
 # Slot membership is addressed with a 64-bit mask on the Rust side.
@@ -58,6 +89,23 @@ def positions_to_mask(positions: Iterable[str], index: Mapping[str, int]) -> int
     return mask
 
 
+def scaled_salary(base: int, multiplier: float) -> int:
+    """Apply a slot's salary multiplier to a base salary.
+
+    Rounded half away from zero, and short-circuited at exactly `1.0` so an
+    ordinary slot cannot drift by a floating-point ulp.
+
+    The rounding rule is part of the contract, not an implementation detail: the
+    Rust kernel does the same thing when it checks the cap, and if the two
+    disagreed a lineup the kernel believes is legal would read as over the cap
+    here. `round()` would not do — it rounds half to even.
+    """
+    if multiplier == 1.0:
+        return base
+    scaled = base * multiplier
+    return math.floor(abs(scaled) + 0.5) * (1 if scaled >= 0 else -1)
+
+
 @dataclass(frozen=True, slots=True)
 class Slot:
     """A run of interchangeable roster positions.
@@ -66,46 +114,196 @@ class Slot:
         name: Label used in error messages and lineup output.
         eligible: Position names a player must have at least one of.
         count: How many slots of this kind the roster has.
+        score_multiplier: What this slot multiplies its occupant's score by. `1.5`
+            is a DraftKings showdown captain.
+
+            This deliberately does **not** affect which player construction puts
+            here. Every candidate for a slot is scaled by the same factor, so a
+            non-negative multiplier cannot reorder them. It changes what the
+            finished lineup is worth, which is what
+            [`PlayerPool.projection_of`][mlb_dfs_solver.pool.PlayerPool.projection_of]
+            reports and what anything ranking lineups against each other needs.
+        salary_multiplier: What this slot multiplies its occupant's salary by.
+            `1.5` is a DraftKings showdown captain; FanDuel's MVP leaves salary
+            alone, so that is `1.0`.
+
+            Unlike the score multiplier this changes construction throughout: the
+            cap check, the cheapest-way-to-finish reservation, and salary repair
+            all price a player by the slot they are being considered for.
     """
 
     name: str
     eligible: tuple[str, ...]
     count: int = 1
+    score_multiplier: float = 1.0
+    salary_multiplier: float = 1.0
 
     def __post_init__(self) -> None:
-        """Reject a slot that can never be filled."""
+        """Reject a slot that can never be filled, or whose multipliers are junk."""
         if self.count < 1:
             msg = f"slot {self.name!r} has count {self.count}; remove it instead"
             raise ValueError(msg)
         if not self.eligible:
             msg = f"slot {self.name!r} lists no eligible positions, so nothing can fill it"
             raise ValueError(msg)
+        for which, value in (
+            ("score_multiplier", self.score_multiplier),
+            ("salary_multiplier", self.salary_multiplier),
+        ):
+            # A NaN silently poisons every comparison it reaches, and a negative
+            # salary multiplier would let a slot pay the caller — which breaks the
+            # monotonicity the kernel's reservation bound assumes.
+            if not math.isfinite(value) or value < 0.0:
+                msg = f"slot {self.name!r} has {which} {value}; it must be finite and non-negative"
+                raise ValueError(msg)
+
+
+UNCAPPED = 2**32 - 1
+"""A `max_count` that imposes no ceiling, for a minimum-only constraint."""
 
 
 @dataclass(frozen=True, slots=True)
 class GroupConstraint:
-    """A cap on how many selected players may share a key.
+    """What a set of selected players sharing a key must look like.
+
+    Four requirements, any combination of which may be set, all counted over the
+    same chosen slots:
+
+    | Field | Reads as |
+    | --- | --- |
+    | `max_count` | at most N players share one key value |
+    | `min_distinct` | at least N *different* key values appear |
+    | `min_stack` | at least one key value supplies N players |
+    | `secondary_min_stack` | a second, different key value supplies N more — the 4-2 |
+
+    They are genuinely different shapes, not variations on a theme. A cap is about
+    one key value; `min_distinct` is about how many are used at all; the stacks
+    are existential — they ask that *some* value (or some pair of values) be well
+    represented without saying which, which is why the builder has to pick targets
+    before it can act.
 
     Attributes:
         key: Name of the per-player key this counts, e.g. `"team"`.
-        max_count: Maximum players sharing one value of that key.
-        slots: Slot names that count toward the cap. `None` means every slot.
-            Restricting this is how "at most 5 hitters from one team" is expressed
-            without a special case.
+        max_count: Maximum players sharing one value of that key. `None` leaves it
+            uncapped, for a constraint that only imposes a minimum.
+        min_distinct: How many distinct values of the key must appear. This is the
+            shape behind "players from at least two different games", which most
+            classic contests require at entry and which a cap cannot express.
+        min_stack: How many players at least one key value must supply — a stack.
+            Unlike the other two this is a strategy rather than an operator's
+            rule; see the module docstring for how the builder chooses which value
+            to stack, and why that choice is redrawn per attempt.
+        secondary_min_stack: How many players a *second, different* key value
+            must supply. `min_stack=4, secondary_min_stack=2` is the classic
+            "4-2": one team stacks four hitters and another stacks two. Requires
+            `min_stack`, and may not exceed it — the labels are primary and
+            secondary, not two interchangeable slots.
+        slots: Slot names that count toward this constraint. `None` means every
+            slot. Restricting this is how "at most 5 hitters from one team" is
+            expressed without a special case, and equally how a stack is confined
+            to hitters.
     """
 
     key: str
-    max_count: int
+    max_count: int | None = None
+    min_distinct: int = 0
+    min_stack: int = 0
+    secondary_min_stack: int = 0
     slots: tuple[str, ...] | None = None
 
     def __post_init__(self) -> None:
-        """Reject a cap that forbids every lineup."""
-        if self.max_count < 1:
+        """Reject a constraint that forbids every lineup, or none of them."""
+        if self.max_count is not None and self.max_count < 1:
             msg = (
                 f"group constraint on {self.key!r} has max_count {self.max_count}, "
                 f"which forbids every lineup; exclude those players from the pool instead"
             )
             raise ValueError(msg)
+        minimums = (
+            ("min_distinct", self.min_distinct),
+            ("min_stack", self.min_stack),
+            ("secondary_min_stack", self.secondary_min_stack),
+        )
+        for which, value in minimums:
+            if value < 0:
+                msg = f"group constraint on {self.key!r} has negative {which} {value}"
+                raise ValueError(msg)
+        if self.secondary_min_stack and not self.min_stack:
+            msg = (
+                f"group constraint on {self.key!r} sets secondary_min_stack "
+                f"{self.secondary_min_stack} without min_stack; the secondary "
+                f"stack is defined relative to a primary one"
+            )
+            raise ValueError(msg)
+        if self.max_count is None and not self.min_distinct and not self.min_stack:
+            msg = (
+                f"group constraint on {self.key!r} sets no cap, no distinct minimum "
+                f"and no stack, so it constrains nothing; remove it"
+            )
+            raise ValueError(msg)
+        if self.max_count is not None and self.min_stack > self.max_count:
+            msg = (
+                f"group constraint on {self.key!r} requires a stack of {self.min_stack} "
+                f"but caps the same key at {self.max_count}; those cannot both hold"
+            )
+            raise ValueError(msg)
+        if self.secondary_min_stack > self.min_stack > 0:
+            msg = (
+                f"group constraint on {self.key!r} has secondary_min_stack "
+                f"{self.secondary_min_stack} above min_stack {self.min_stack}; "
+                f"the primary stack is the larger one by definition — swap them"
+            )
+            raise ValueError(msg)
+
+    @property
+    def cap(self) -> int:
+        """`max_count` as the kernel wants it, with `None` spelled [`UNCAPPED`]."""
+        return UNCAPPED if self.max_count is None else self.max_count
+
+
+@dataclass(frozen=True, slots=True)
+class ConflictRule:
+    """Two players may not be rostered together when their keys match.
+
+    This is the one rule shape a [`GroupConstraint`][mlb_dfs_solver.spec.GroupConstraint]
+    cannot express. A group cap counts players who share a value of *one* key; a
+    conflict joins *two different* keys across a pair of players. "No hitters
+    against my starting pitcher" is the pitcher's `opponent` matching the hitter's
+    `team`, which is not a grouping at all.
+
+    Nothing enables this for you. Presets ship without conflicts, because avoiding
+    a pitcher's opposing hitters is a preference and not a contest rule — a
+    contrarian deliberately wants that correlation, and an optimizer that silently
+    forbade it would be wrong for them. Opt in with `dataclasses.replace`:
+
+    ```python
+    from dataclasses import replace
+    from mlb_dfs_solver.presets import DK_MLB_CLASSIC
+    from mlb_dfs_solver.spec import ConflictRule
+
+    spec = replace(
+        DK_MLB_CLASSIC,
+        conflicts=(ConflictRule(left_key="opponent", right_key="team", left_positions=("P",)),),
+    )
+    ```
+
+    Attributes:
+        left_key: Per-player key read from the first player of the pair.
+        right_key: Per-player key read from the second. Matching `left_key`'s
+            value against this one is what makes the pair a conflict. Negative key
+            values match nothing, the same as everywhere else.
+        left_positions: Restricts the rule's first side to players eligible at one
+            of these positions. `None` means every player. For the MLB rule this
+            is `("P",)`, so it is a *pitcher's* opponent that matters.
+        right_positions: The same restriction for the second side. Leaving it
+            `None` also forbids two opposing pitchers, which some people want and
+            some do not — name the hitter positions if you do not.
+    """
+
+    left_key: str
+    right_key: str
+    left_positions: tuple[str, ...] | None = None
+    right_positions: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,6 +319,10 @@ class RosterSpec:
         salary_floor: Minimum total salary. Zero disables the floor.
         groups: Group caps.
         positions: Position names, in bit order. Determines the mask encoding.
+        conflicts: Pairs of players forbidden from sharing a lineup, expressed as
+            key joins. Empty by default and never populated by a preset — see
+            [`ConflictRule`][mlb_dfs_solver.spec.ConflictRule] for why the opt-in
+            is explicit.
     """
 
     slots: tuple[Slot, ...]
@@ -128,6 +330,7 @@ class RosterSpec:
     positions: tuple[str, ...]
     salary_floor: int = 0
     groups: tuple[GroupConstraint, ...] = field(default_factory=tuple)
+    conflicts: tuple[ConflictRule, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         """Validate the specification as a whole.
@@ -173,7 +376,48 @@ class RosterSpec:
                 )
                 raise ValueError(msg)
 
+        for rule in self.conflicts:
+            unknown = (set(rule.left_positions or ()) | set(rule.right_positions or ())) - (
+                known_positions
+            )
+            if unknown:
+                msg = (
+                    f"conflict rule on {rule.left_key!r}/{rule.right_key!r} names "
+                    f"position(s) {sorted(unknown)} that are not in this "
+                    f"specification's positions {list(self.positions)}"
+                )
+                raise ValueError(msg)
+
         known_slots = set(slot_names)
+        counted = {slot.name: slot.count for slot in self.slots}
+        for group in self.groups:
+            # A minimum asking for more players than the slots it counts can hold
+            # can never be met. Caught here because the alternative is the caller
+            # reading "no valid lineups found" and having no way to tell that from
+            # a slate that simply lacked the players.
+            names = group.slots if group.slots is not None else tuple(counted)
+            total = sum(counted.get(name, 0) for name in names)
+            for which, wanted in (
+                ("min_distinct", group.min_distinct),
+                ("min_stack", group.min_stack),
+            ):
+                if wanted > total:
+                    msg = (
+                        f"group constraint on {group.key!r} requires {which} {wanted} "
+                        f"but counts only {total} roster slot(s), so no lineup can "
+                        f"satisfy it"
+                    )
+                    raise ValueError(msg)
+            # The two stacks occupy disjoint key values, so they need room for
+            # their sum, not for each alone.
+            if group.min_stack + group.secondary_min_stack > total:
+                msg = (
+                    f"group constraint on {group.key!r} requires stacks of "
+                    f"{group.min_stack} and {group.secondary_min_stack} from "
+                    f"different key values but counts only {total} roster "
+                    f"slot(s), so no lineup can satisfy both"
+                )
+                raise ValueError(msg)
         for group in self.groups:
             if group.slots is None:
                 continue
@@ -203,12 +447,44 @@ class RosterSpec:
             seen.setdefault(group.key, None)
         return tuple(seen)
 
+    @property
+    def conflict_keys(self) -> tuple[str, ...]:
+        """Distinct key names the conflict rules read, in a stable order.
+
+        Kept separate from `group_keys` because the two are consumed differently:
+        group keys become a matrix the kernel indexes by column, while conflict
+        keys are resolved to explicit player pairs before the boundary.
+        """
+        seen: dict[str, None] = {}
+        for rule in self.conflicts:
+            seen.setdefault(rule.left_key, None)
+            seen.setdefault(rule.right_key, None)
+        return tuple(seen)
+
+    @property
+    def has_multipliers(self) -> bool:
+        """Whether any slot scales score or salary."""
+        return any(
+            slot.score_multiplier != 1.0 or slot.salary_multiplier != 1.0 for slot in self.slots
+        )
+
     def slot_names(self) -> list[str]:
         """One entry per roster position, expanding multi-count slots."""
         names: list[str] = []
         for slot in self.slots:
             names.extend([slot.name] * slot.count)
         return names
+
+    def score_multipliers(self) -> list[float]:
+        """One score multiplier per roster position, in slot order.
+
+        Parallel to `slot_names()`, so it lines up with a lineup's columns.
+        """
+        return [slot.score_multiplier for slot in self.slots for _ in range(slot.count)]
+
+    def salary_multipliers(self) -> list[float]:
+        """One salary multiplier per roster position, in slot order."""
+        return [slot.salary_multiplier for slot in self.slots for _ in range(slot.count)]
 
     def mask_for(self, positions: Iterable[str]) -> int:
         """Encode position names as a bitmask under this specification."""

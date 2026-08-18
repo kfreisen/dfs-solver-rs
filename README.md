@@ -7,50 +7,185 @@ portfolio selection, implemented in Rust.
 > are complete; `0.0.1.dev0` is the placeholder version until the first PyPI
 > release.
 
+New here? [**How it works**](https://kfreisen.github.io/mlb-dfs-solver/concepts/) is the
+background: what the problem is, where a solver is and is not the right tool, and what each stage
+does. The short version follows.
+
 ## The problem
 
 Two different problems, usually conflated:
 
 1. **Build one valid roster.** Pick players under a salary cap, filling positional slots, subject
    to group limits ("at most 6 from one team"). This is an integer program, and an ILP solver
-   answers it exactly.
-2. **Build a *portfolio* of rosters.** Pick 150 lineups that collectively do well across
-   simulated outcomes. Optimality per lineup is close to worthless here — 150 optimal lineups are
-   150 nearly identical lineups. What matters is diverse coverage of the outcome space.
+   answers it exactly. If that is your problem, use a solver — `benchmarks/baselines/milp.py`
+   contains one, and it wins. (It lives in this repository only, not in the installed
+   package — vendor it.)
 
-For (2), asking an ILP for 150 solutions is both slow and the wrong objective. `mlb_dfs_solver`
-generates a large randomized-greedy candidate pool and then selects from it by **lazy-greedy
-submodular maximization** — Minoux's lazy evaluation, stochastic greedy for large pools, and a
-CVaR-upside objective that scores a lineup by how much it improves the portfolio's *tail*, not
-its mean.
+2. **Build many rosters.** A contest takes 150 entries; a field simulation takes a hundred
+   thousand. Asking a solver for the best lineup, forbidding it, and re-solving gives you the top
+   N by projection — a set built from a narrow slice of the slate, whose entries differ from one
+   another by a player or two.
+
+`mlb_dfs_solver` does (2) by randomized greedy construction: perturb the objective, fill slots,
+repeat. It is a weak optimizer per lineup and a fast one per thousand.
+
+The difference in what comes out is plain: a solver's 150 are the top rosters by projection —
+near-identical, drawn from a narrow slice of the slate. These are spread in projection and drawn
+from roughly twice as many players. Steering that trade — cash, single-entry, tournament,
+contest scale — is the [recipes page](https://kfreisen.github.io/mlb-dfs-solver/recipes/).
+
+```
+build_lineups()          score_lineups()            select_portfolio()
+  what is legal      ->    what might happen    ->    what to enter
+```
+
+You supply the middle stage — the `(players × outcomes)` matrix. Simulating a sport well means
+modelling that sport, and this library works for any of them.
+
+**What this package does not claim.** Nothing here tells you what a set of lineups would have
+won. That requires a simulator and a model of the field, neither of which is included, and a
+benchmark shipping its own would be grading its own fixture. The tables below measure generation
+time and describe what was generated. Which output suits your contest is your call.
 
 ## What's in it
 
 - Randomized greedy construction with salary-repair backtracking, over an arbitrary roster
   specification — slots, position eligibility as bitmasks, salary cap and floor, and generic
   group constraints.
-- Lazy-greedy submodular selection with a CVaR-upside objective, ownership/leverage discounting,
-  and a diversity penalty.
+- Per-slot score and salary multipliers, so showdown / single-game formats (a captain worth
+  1.5× and costing 1.5×) are the same code path as a classic roster.
+- Optional pairwise conflicts — "no hitters against my starting pitcher", expressed as a join
+  between two player keys. Off unless you ask: it is a strategy, not a contest rule, and a
+  contrarian deliberately wants that correlation.
+- Locks (players forced into every lineup, matched to slots properly rather than greedily) and
+  per-player exposure caps across the portfolio.
+- Stacking, with the stacked team drawn per attempt so a portfolio spreads across teams instead
+  of piling onto one.
+- Lazy-greedy submodular portfolio selection over simulated outcomes, in cash and tournament
+  modes. Greedy is within `1 - 1/e` of the optimal portfolio *under the matrix you supply* — a
+  guarantee on the search, not on the simulation. You supply the simulation.
 - Sport presets (`mlb_dfs_solver.presets`) shipped as data, not hardcoded branches.
+- Intent-named recipes (`mlb_dfs_solver.recipes`): typed bundles of the interrelated parameters,
+  one per way of playing — cash, single-entry, GPP, candidate pool, showdown — each a printable
+  dataclass whose `.build()` and `.select()` are plain calls to the functions above.
 - Runtime AVX2 dispatch. Wheels are built portably; `mlb_dfs_solver.active_isa()` reports which path
   your machine took.
 
 ## Benchmarks
 
-Measured against MILP formulations of the same problem (PuLP/CBC and OR-Tools), which live in
-[`benchmarks/baselines/`](https://github.com/kfreisen/mlb-dfs-solver/benchmarks/baselines) as real, tested, importable code — along with a
-pure-Python transcription of the greedy algorithm that serves as the parity oracle.
+Measured against a MILP formulation of the same problem (OR-Tools CP-SAT), which lives in
+[`benchmarks/baselines/`](https://github.com/kfreisen/mlb-dfs-solver/tree/main/benchmarks/baselines)
+as real, tested, importable code — along with a pure-Python transcription of the greedy algorithm
+that serves as the parity oracle. The solver side models every rule the specification can
+express, so the comparison is a comparison and not a handicap.
 
-Numbers and the hardware they were measured on: <https://kfreisen.github.io/mlb-dfs-solver/benchmarks/>
+Two things are measured: how long generation takes, and what it generates. Nothing is scored
+against a simulated contest — see [what is not measured](#what-is-not-measured).
+
+The tables below are generated by `task bench` from the committed results, not written by hand.
+
+<!-- begin:benchmark-summary -->
+
+12th Gen Intel(R) Core(TM) i9-12900H, 20 cores · Linux 6.17.9-76061709-generic · measured 2026-08-17 against `6c06cdf`.
+
+**Every scenario is a way somebody plays.** Cumulative: each row adds one thing a player turns on. Both implementations are asked for the same number of entries on the same slate — 150 is a DraftKings MLB classic maximum, cash is played a few entries deep.
+
+| Scenario | Entries | This | Pure Python | CP-SAT | Speedup | Ours | CP-SAT's |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| rules-only | 150 | 1.53 ms | 28.46 ms | 15.7 s | 10,242× | 150 of 150 | 150 of 150 |
+| single-entry | 1 | 540 µs | 480 µs | 38.72 ms | 72× | 1 of 1 | 1 of 1 |
+| cash | 20 | 494 µs | 3.77 ms | 846.43 ms | 1,714× | 20 of 20 | 20 of 20 |
+| stack | 150 | 2.66 ms | 42.50 ms | 294.0 s | 110,560× | 150 of 150 | 150 of 150 |
+| stack-4-2 | 150 | 3.85 ms | 39.67 ms | 424.2 s | 110,190× | 150 of 150 | 150 of 150 |
+| conflict | 150 | 3.06 ms | 44.61 ms | 200.0 s | 65,421× | 150 of 150 | 150 of 150 |
+| locks | 150 | 2.95 ms | 60.68 ms | 255.4 s | 86,616× | 150 of 150 | 150 of 150 |
+| mme | 150 | 3.01 ms | 60.24 ms | 70.7 s | 23,524× | 150 of 150 | 150 of 150 |
+| mme-diverse | 150 | 2.98 ms | — | — | — | 150 of 150 | — |
+| showdown | 150 | 562 µs | 15.06 ms | 2.8 s | 5,019× | 150 of 150 | 150 of 150 |
+| contest-scale | 10,000 | 377.87 ms | — | 4.01 hr | — | 10,000 of 10,000 | 713 of 10,000 |
+| selection | 150 | 17.64 ms | 1.1 s | — | — | 100 of 150 | — |
+
+On one lineup the pure-Python oracle outruns the kernel: a microsecond job pays the kernel's fixed parallelism setup and gets nothing back for it. The row exists for the solver comparison — one roster is the case a solver wins.
+
+Selection returned 100 of 150: tournament mode stops once no remaining candidate covers a new outcome, so a pool can be exhausted before the count is reached. That is the objective working, not a shortfall.
+
+No speedup is printed for `contest-scale`: the two sides returned different numbers of lineups, and dividing the times of unequal draws is not a ratio. The yield columns carry the comparison instead.
+
+**What each one generates.** The `mme` row above, described. With no-good cuts — the cheapest way to make a solver produce N distinct lineups — its entries cluster at the optimum, built from a fraction of the slate. With overlap constraints, the fair diversity formulation, a solver spreads properly; what it pays is the time column. Which output you want depends on the contest.
+
+| | Time | Players used | Mean overlap | In >50% of entries | Projection, min → max | Entries |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| This package | 3.01 ms | **115 of 288** | 34% | 3 | 84% → 97% of optimum | 150 |
+| Solver + no-good cuts | 70.7 s | **53 of 288** | 49% | 6 | 98% → 100% of optimum | 150 |
+| Solver + max 3/10 shared | 30.4 min | **187 of 288** | 24% | 2 | 84% → 100% of optimum | 150 |
+
+**At contest scale.** The same configuration at field size — the draw a field simulation or a candidate pool needs, and where the two stop being alternatives. Measured, not extrapolated.
+
+| | Lineups | Time | Per lineup |
+| --- | ---: | ---: | ---: |
+| This package | 10,000 | 377.87 ms | 38 µs |
+| Solver + no-good cuts (4.00 hr budget) | 713 | 4.01 hr | 20.2 s |
+
+**The whole job, timed.** What a tournament player actually runs: build 20,000 candidates under a stacked, conflict-ruled spec, build a 100,000-entry field under contest rules, simulate 1,000 outcomes, score everything, draw the lines, and select a 150-entry tournament portfolio and a 20-entry cash portfolio.
+
+| Stage | Time |
+| --- | ---: |
+| build candidates | 268.77 ms |
+| build field | 764.72 ms |
+| simulate | 8.12 ms |
+| score field | 221.48 ms |
+| score candidates | 43.82 ms |
+| draw lines | 2.9 s |
+| select gpp | 13.48 ms |
+| select cash | 5.64 ms |
+| **total** | **4.2 s** |
+
+The `draw lines` stage is `np.quantile` over the field's score matrix — caller-side NumPy that any pipeline pays regardless of what built the lineups. It is timed because a player's session pays it; it is not this package's code.
+
+<!-- end:benchmark-summary -->
+
+What those columns mean:
+
+- **The optimum** — the single highest-projection legal roster, proved by a solver with no cuts
+  and no time limit. One lineup, not a portfolio. Projection arithmetic on the inputs both sides
+  were given, so it measures the search, not the projections.
+- **Players used** — distinct players appearing anywhere in the draw, out of the slate.
+- **Projection, min → max** — the lowest and highest entry, as fractions of the optimum. A solver
+  enumerating by projection produces a narrow band, since "second best" means "the best one with
+  a player swapped".
+- **In >50% of entries** — how many players appear in more than half the draw. A concentration
+  measure that discriminates where "share of the most-used player" often does not.
+- **Mean overlap** — average fraction of players two entries share, over every pair. Two lineups
+  differing by one player out of ten overlap 90%, and a portfolio of those is one entry.
+- **No-good cuts** — how a solver is made to produce a different lineup each time: after each
+  roster, add a constraint that at least one of its players must be dropped next.
+- **Returned** — how many requested lineups came back, for both implementations. A solver is
+  complete; randomized construction is not, and when constraints bite it runs out of legal
+  rosters it has not already found.
+
+Full definitions, every scenario, every implementation and the hardware:
+<https://kfreisen.github.io/mlb-dfs-solver/benchmarks/>
+
+### What is not measured
+
+No table here reports what a portfolio would have won, cashed, or returned. Those numbers need a
+simulator and a field model. This package supplies neither, so any such figure would come from a
+fixture written for the benchmark — and would move when the fixture was rewritten.
+
+That limits what can be shown, and it is the honest limit. A solver's 150 lineups are higher
+projected; these are drawn from more of the slate. Which is worth more depends on your contest
+and on how far you trust your projections.
 
 ## Install
 
+Once the first release is on PyPI:
+
 ```bash
-pip install mlb_dfs_solver
+pip install mlb-dfs-solver
 ```
 
-Binary wheels are published for Linux (x86-64, aarch64), macOS (arm64, x86-64), and Windows
-(x86-64). Installing from source requires a Rust toolchain:
+The release workflow builds binary wheels for Linux (x86-64, aarch64), macOS (arm64, x86-64),
+and Windows (x86-64). Installing from source requires a Rust toolchain:
 
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh

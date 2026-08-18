@@ -1,0 +1,850 @@
+{
+  "schema": 1,
+  "package": "mlb-dfs-solver",
+  "version": "0.0.1.dev0",
+  "git_sha": "1684b8d",
+  "timestamp": "2026-08-15T19:32:20+00:00",
+  "hardware": {
+    "id": "12th-gen-intel-core-i9-12900h-linux",
+    "cpu": "12th Gen Intel(R) Core(TM) i9-12900H",
+    "cores": 20,
+    "ram_gb": 62.5,
+    "os": "Linux 6.17.9-76061709-generic",
+    "python": "3.11.15"
+  },
+  "cases": [
+    {
+      "name": "build/10",
+      "impl": "mlb_dfs_solver_rust",
+      "params": {
+        "num_lineups": 10,
+        "pool": 288,
+        "produced": 10,
+        "requested": 10
+      },
+      "metric": "seconds",
+      "n": 853,
+      "mean": 0.00017574862050217908,
+      "median": 0.0001722219167277217,
+      "stddev": 4.740202302062519e-05,
+      "min": 0.00012294703628867865
+    },
+    {
+      "name": "build/150",
+      "impl": "mlb_dfs_solver_rust",
+      "params": {
+        "num_lineups": 150,
+        "pool": 288,
+        "produced": 150,
+        "requested": 150
+      },
+      "metric": "seconds",
+      "n": 915,
+      "mean": 0.001109133317908832,
+      "median": 0.0010262120049446821,
+      "stddev": 0.00034571141482339163,
+      "min": 0.000866197980940342
+    },
+    {
+      "name": "build/1000",
+      "impl": "mlb_dfs_solver_rust",
+      "params": {
+        "num_lineups": 1000,
+        "pool": 288,
+        "produced": 1000,
+        "requested": 1000
+      },
+      "metric": "seconds",
+      "n": 149,
+      "mean": 0.007065948883334062,
+      "median": 0.006863618968054652,
+      "stddev": 0.0007591223731305176,
+      "min": 0.006052904995158315
+    },
+    {
+      "name": "build/20000",
+      "impl": "mlb_dfs_solver_rust",
+      "params": {
+        "num_lineups": 20000,
+        "pool": 288,
+        "produced": 15274,
+        "requested": 20000
+      },
+      "metric": "seconds",
+      "n": 9,
+      "mean": 0.12310069800716722,
+      "median": 0.12215891398955137,
+      "stddev": 0.003931759135279393,
+      "min": 0.11798236100003123
+    },
+    {
+      "name": "build/10",
+      "impl": "reference_python",
+      "params": {
+        "num_lineups": 10,
+        "pool": 288,
+        "produced": 10,
+        "requested": 10
+      },
+      "metric": "seconds",
+      "n": 500,
+      "mean": 0.0017596119572408496,
+      "median": 0.0017413839814253151,
+      "stddev": 9.948328618357685e-05,
+      "min": 0.0016389070078730583
+    },
+    {
+      "name": "build/150",
+      "impl": "reference_python",
+      "params": {
+        "num_lineups": 150,
+        "pool": 288,
+        "produced": 150,
+        "requested": 150
+      },
+      "metric": "seconds",
+      "n": 36,
+      "mean": 0.027206411944158997,
+      "median": 0.027114569500554353,
+      "stddev": 0.0003115053494768873,
+      "min": 0.02670457400381565
+    },
+    {
+      "name": "build/1000",
+      "impl": "reference_python",
+      "params": {
+        "num_lineups": 1000,
+        "pool": 288,
+        "produced": 1000,
+        "requested": 1000
+      },
+      "metric": "seconds",
+      "n": 5,
+      "mean": 0.2593529253732413,
+      "median": 0.25871069298591465,
+      "stddev": 0.0016022124433385163,
+      "min": 0.2578896270133555
+    },
+    {
+      "name": "build/10",
+      "impl": "milp_pulp_cbc",
+      "params": {
+        "num_lineups": 10,
+        "pool": 288,
+        "produced": 10,
+        "requested": 10
+      },
+      "metric": "seconds",
+      "n": 2,
+      "mean": 0.7239790555322543,
+      "median": 0.7239790555322543,
+      "stddev": 0.0015545438665674344,
+      "min": 0.7228798270225525
+    },
+    {
+      "name": "build/150",
+      "impl": "milp_pulp_cbc",
+      "params": {
+        "num_lineups": 150,
+        "pool": 288,
+        "produced": 150,
+        "requested": 150
+      },
+      "metric": "seconds",
+      "n": 2,
+      "mean": 11.636003876919858,
+      "median": 11.636003876919858,
+      "stddev": 0.04049354321837281,
+      "min": 11.607370617915876
+    },
+    {
+      "name": "constraints/bare",
+      "impl": "mlb_dfs_solver_rust",
+      "params": {
+        "rung": "bare",
+        "requested": 25,
+        "produced": 25,
+        "yield": 1.0
+      },
+      "metric": "seconds",
+      "n": 1120,
+      "mean": 0.0003489035171306958,
+      "median": 0.0003366359742358327,
+      "stddev": 0.00010448420750439711,
+      "min": 0.0002673339331522584,
+      "detail": "salary cap and position slots only"
+    },
+    {
+      "name": "constraints/caps",
+      "impl": "mlb_dfs_solver_rust",
+      "params": {
+        "rung": "caps",
+        "requested": 25,
+        "produced": 25,
+        "yield": 1.0
+      },
+      "metric": "seconds",
+      "n": 2301,
+      "mean": 0.00035654224826914233,
+      "median": 0.0003434770042076707,
+      "stddev": 9.531251208326715e-05,
+      "min": 0.0002778989728540182,
+      "detail": "+ team caps (6 total, 5 hitters)"
+    },
+    {
+      "name": "constraints/floor",
+      "impl": "mlb_dfs_solver_rust",
+      "params": {
+        "rung": "floor",
+        "requested": 25,
+        "produced": 25,
+        "yield": 1.0
+      },
+      "metric": "seconds",
+      "n": 3132,
+      "mean": 0.00038327354212835106,
+      "median": 0.0003674730542115867,
+      "stddev": 0.00015873171091120334,
+      "min": 0.00027244503144174814,
+      "detail": "+ salary floor"
+    },
+    {
+      "name": "constraints/games",
+      "impl": "mlb_dfs_solver_rust",
+      "params": {
+        "rung": "games",
+        "requested": 25,
+        "produced": 25,
+        "yield": 1.0
+      },
+      "metric": "seconds",
+      "n": 2348,
+      "mean": 0.0003952746541025926,
+      "median": 0.00037787697510793805,
+      "stddev": 0.00012929489685771018,
+      "min": 0.0002921679988503456,
+      "detail": "+ players from 2 distinct games"
+    },
+    {
+      "name": "constraints/conflicts",
+      "impl": "mlb_dfs_solver_rust",
+      "params": {
+        "rung": "conflicts",
+        "requested": 25,
+        "produced": 25,
+        "yield": 1.0
+      },
+      "metric": "seconds",
+      "n": 1075,
+      "mean": 0.0005985406738554322,
+      "median": 0.0006107479566708207,
+      "stddev": 0.00015091989328295662,
+      "min": 0.00042912899516522884,
+      "detail": "+ no hitters against the rostered pitcher"
+    },
+    {
+      "name": "constraints/stack",
+      "impl": "mlb_dfs_solver_rust",
+      "params": {
+        "rung": "stack",
+        "requested": 25,
+        "produced": 25,
+        "yield": 1.0
+      },
+      "metric": "seconds",
+      "n": 1376,
+      "mean": 0.0006013662564645381,
+      "median": 0.0005990594509057701,
+      "stddev": 0.00011873486697432257,
+      "min": 0.00045094406232237816,
+      "detail": "+ a 4-hitter team stack"
+    },
+    {
+      "name": "constraints/locks",
+      "impl": "mlb_dfs_solver_rust",
+      "params": {
+        "rung": "locks",
+        "requested": 25,
+        "produced": 25,
+        "yield": 1.0
+      },
+      "metric": "seconds",
+      "n": 1304,
+      "mean": 0.0006170674147544304,
+      "median": 0.0006149444961920381,
+      "stddev": 0.00012936929274176385,
+      "min": 0.0004654920194298029,
+      "detail": "+ two locked players"
+    },
+    {
+      "name": "constraints/exposure",
+      "impl": "mlb_dfs_solver_rust",
+      "params": {
+        "rung": "exposure",
+        "requested": 25,
+        "produced": 14,
+        "yield": 0.56
+      },
+      "metric": "seconds",
+      "n": 1491,
+      "mean": 0.0007820179563991371,
+      "median": 0.00075497105717659,
+      "stddev": 0.00017166238271860773,
+      "min": 0.0005547039909288287,
+      "detail": "+ 40% exposure cap on every unlocked player"
+    },
+    {
+      "name": "constraints/bare",
+      "impl": "reference_python",
+      "params": {
+        "rung": "bare",
+        "requested": 25,
+        "produced": 25,
+        "yield": 1.0
+      },
+      "metric": "seconds",
+      "n": 211,
+      "mean": 0.004277721222852008,
+      "median": 0.004266237025149167,
+      "stddev": 9.423309963806988e-05,
+      "min": 0.004024478024803102,
+      "detail": "salary cap and position slots only"
+    },
+    {
+      "name": "constraints/caps",
+      "impl": "reference_python",
+      "params": {
+        "rung": "caps",
+        "requested": 25,
+        "produced": 25,
+        "yield": 1.0
+      },
+      "metric": "seconds",
+      "n": 230,
+      "mean": 0.004468398308381439,
+      "median": 0.004467390011996031,
+      "stddev": 5.89911164987998e-05,
+      "min": 0.004289411008358002,
+      "detail": "+ team caps (6 total, 5 hitters)"
+    },
+    {
+      "name": "constraints/floor",
+      "impl": "reference_python",
+      "params": {
+        "rung": "floor",
+        "requested": 25,
+        "produced": 25,
+        "yield": 1.0
+      },
+      "metric": "seconds",
+      "n": 222,
+      "mean": 0.004443627532554773,
+      "median": 0.004439543525222689,
+      "stddev": 8.744922574490306e-05,
+      "min": 0.004280017921701074,
+      "detail": "+ salary floor"
+    },
+    {
+      "name": "constraints/games",
+      "impl": "reference_python",
+      "params": {
+        "rung": "games",
+        "requested": 25,
+        "produced": 25,
+        "yield": 1.0
+      },
+      "metric": "seconds",
+      "n": 208,
+      "mean": 0.004841842979658395,
+      "median": 0.004835350497160107,
+      "stddev": 7.19744474649701e-05,
+      "min": 0.004641807987354696,
+      "detail": "+ players from 2 distinct games"
+    },
+    {
+      "name": "constraints/conflicts",
+      "impl": "reference_python",
+      "params": {
+        "rung": "conflicts",
+        "requested": 25,
+        "produced": 25,
+        "yield": 1.0
+      },
+      "metric": "seconds",
+      "n": 133,
+      "mean": 0.007525866007418337,
+      "median": 0.00753306201659143,
+      "stddev": 9.367129433178291e-05,
+      "min": 0.007291689980775118,
+      "detail": "+ no hitters against the rostered pitcher"
+    },
+    {
+      "name": "constraints/stack",
+      "impl": "reference_python",
+      "params": {
+        "rung": "stack",
+        "requested": 25,
+        "produced": 25,
+        "yield": 1.0
+      },
+      "metric": "seconds",
+      "n": 99,
+      "mean": 0.009914643348740282,
+      "median": 0.009913584915921092,
+      "stddev": 9.01191621405419e-05,
+      "min": 0.009658558061346412,
+      "detail": "+ a 4-hitter team stack"
+    },
+    {
+      "name": "constraints/locks",
+      "impl": "reference_python",
+      "params": {
+        "rung": "locks",
+        "requested": 25,
+        "produced": 25,
+        "yield": 1.0
+      },
+      "metric": "seconds",
+      "n": 69,
+      "mean": 0.014729921952348905,
+      "median": 0.014658491942100227,
+      "stddev": 0.0002418079539948627,
+      "min": 0.014175596996210515,
+      "detail": "+ two locked players"
+    },
+    {
+      "name": "constraints/exposure",
+      "impl": "reference_python",
+      "params": {
+        "rung": "exposure",
+        "requested": 25,
+        "produced": 14,
+        "yield": 0.56
+      },
+      "metric": "seconds",
+      "n": 17,
+      "mean": 0.06060512339942815,
+      "median": 0.06068135390523821,
+      "stddev": 0.0005362568709539364,
+      "min": 0.059446846949867904,
+      "detail": "+ 40% exposure cap on every unlocked player"
+    },
+    {
+      "name": "constraints/bare",
+      "impl": "milp_ortools_cpsat",
+      "params": {
+        "rung": "bare",
+        "requested": 25,
+        "produced": 25,
+        "yield": 1.0
+      },
+      "metric": "seconds",
+      "n": 2,
+      "mean": 0.3801920419209637,
+      "median": 0.3801920419209637,
+      "stddev": 0.10004196665505852,
+      "min": 0.30945168889593333,
+      "detail": "salary cap and position slots only"
+    },
+    {
+      "name": "constraints/caps",
+      "impl": "milp_ortools_cpsat",
+      "params": {
+        "rung": "caps",
+        "requested": 25,
+        "produced": 25,
+        "yield": 1.0
+      },
+      "metric": "seconds",
+      "n": 2,
+      "mean": 0.5644701839773916,
+      "median": 0.5644701839773916,
+      "stddev": 0.0033324019044711425,
+      "min": 0.5621138199931011,
+      "detail": "+ team caps (6 total, 5 hitters)"
+    },
+    {
+      "name": "constraints/floor",
+      "impl": "milp_ortools_cpsat",
+      "params": {
+        "rung": "floor",
+        "requested": 25,
+        "produced": 25,
+        "yield": 1.0
+      },
+      "metric": "seconds",
+      "n": 2,
+      "mean": 0.569352209509816,
+      "median": 0.569352209509816,
+      "stddev": 0.003781877958232334,
+      "min": 0.56667801795993,
+      "detail": "+ salary floor"
+    },
+    {
+      "name": "constraints/games",
+      "impl": "milp_ortools_cpsat",
+      "params": {
+        "rung": "games",
+        "requested": 25,
+        "produced": 25,
+        "yield": 1.0
+      },
+      "metric": "seconds",
+      "n": 2,
+      "mean": 0.6140310794580728,
+      "median": 0.6140310794580728,
+      "stddev": 0.01242330121456929,
+      "min": 0.6052464789245278,
+      "detail": "+ players from 2 distinct games"
+    },
+    {
+      "name": "constraints/conflicts",
+      "impl": "milp_ortools_cpsat",
+      "params": {
+        "rung": "conflicts",
+        "requested": 25,
+        "produced": 25,
+        "yield": 1.0
+      },
+      "metric": "seconds",
+      "n": 2,
+      "mean": 0.8597506219521165,
+      "median": 0.8597506219521165,
+      "stddev": 7.64878043325419e-05,
+      "min": 0.8596965369069949,
+      "detail": "+ no hitters against the rostered pitcher"
+    },
+    {
+      "name": "constraints/stack",
+      "impl": "milp_ortools_cpsat",
+      "params": {
+        "rung": "stack",
+        "requested": 25,
+        "produced": 25,
+        "yield": 1.0
+      },
+      "metric": "seconds",
+      "n": 2,
+      "mean": 3.918492562021129,
+      "median": 3.918492562021129,
+      "stddev": 0.03670744176725659,
+      "min": 3.8925364810274914,
+      "detail": "+ a 4-hitter team stack"
+    },
+    {
+      "name": "constraints/locks",
+      "impl": "milp_ortools_cpsat",
+      "params": {
+        "rung": "locks",
+        "requested": 25,
+        "produced": 25,
+        "yield": 1.0
+      },
+      "metric": "seconds",
+      "n": 2,
+      "mean": 1.91043582506245,
+      "median": 1.91043582506245,
+      "stddev": 0.0034295824943335173,
+      "min": 1.9080107440240681,
+      "detail": "+ two locked players"
+    },
+    {
+      "name": "constraints/exposure",
+      "impl": "milp_ortools_cpsat",
+      "params": {
+        "rung": "exposure",
+        "requested": 25,
+        "produced": 25,
+        "yield": 1.0
+      },
+      "metric": "seconds",
+      "n": 2,
+      "mean": 1.2199149985681288,
+      "median": 1.2199149985681288,
+      "stddev": 0.008575091690042651,
+      "min": 1.2138514930848032,
+      "detail": "+ 40% exposure cap on every unlocked player"
+    },
+    {
+      "name": "generated/floor",
+      "impl": "mlb_dfs_solver_rust",
+      "params": {
+        "requested": 150,
+        "produced": 150
+      },
+      "metric": "seconds",
+      "n": 597,
+      "mean": 0.0009806171670740148,
+      "median": 0.0009560059988871217,
+      "stddev": 0.00011712009064449974,
+      "min": 0.0008459270466119051,
+      "detail": "+ salary floor",
+      "quality": {
+        "optimum": 115.65,
+        "median_percentile": 95.28,
+        "p10_percentile": 80.75,
+        "reference_population": 2000,
+        "lineups": 150,
+        "distinct_players": 59,
+        "pool_size": 288,
+        "players_over_50pct": 4,
+        "players_over_20pct": 15,
+        "max_exposure": 1.0,
+        "median_exposure_used": 0.0733,
+        "projection_min": 98.9,
+        "projection_median": 105.17,
+        "projection_max": 111.47,
+        "salary_min": 49750,
+        "salary_median": 49750,
+        "salary_max": 49750,
+        "team_block_median": 3,
+        "team_block_max": 5,
+        "best_ratio": 0.9639,
+        "median_ratio": 0.9094,
+        "worst_ratio": 0.8552
+      }
+    },
+    {
+      "name": "generated/stack",
+      "impl": "mlb_dfs_solver_rust",
+      "params": {
+        "requested": 150,
+        "produced": 150
+      },
+      "metric": "seconds",
+      "n": 493,
+      "mean": 0.0013330739107678133,
+      "median": 0.001317084999755025,
+      "stddev": 0.00020711732846709252,
+      "min": 0.001121950102970004,
+      "detail": "+ a 4-hitter team stack",
+      "quality": {
+        "optimum": 115.65,
+        "median_percentile": 93.05,
+        "p10_percentile": 60.86,
+        "reference_population": 2000,
+        "lineups": 150,
+        "distinct_players": 117,
+        "pool_size": 288,
+        "players_over_50pct": 3,
+        "players_over_20pct": 11,
+        "max_exposure": 0.8933,
+        "median_exposure_used": 0.04,
+        "projection_min": 92.57,
+        "projection_median": 100.99,
+        "projection_max": 109.38,
+        "salary_min": 49000,
+        "salary_median": 49750,
+        "salary_max": 49750,
+        "team_block_median": 5,
+        "team_block_max": 6,
+        "best_ratio": 0.9458,
+        "median_ratio": 0.8732,
+        "worst_ratio": 0.8004
+      }
+    },
+    {
+      "name": "generated/floor",
+      "impl": "milp_ortools_cpsat",
+      "params": {
+        "requested": 150,
+        "produced": 150
+      },
+      "metric": "seconds",
+      "n": 2,
+      "mean": 5.193870517483447,
+      "median": 5.193870517483447,
+      "stddev": 0.03636001121859243,
+      "min": 5.168160106986761,
+      "detail": "+ salary floor",
+      "quality": {
+        "optimum": 115.65,
+        "median_percentile": 100.0,
+        "p10_percentile": 100.0,
+        "reference_population": 2000,
+        "lineups": 150,
+        "distinct_players": 33,
+        "pool_size": 288,
+        "players_over_50pct": 9,
+        "players_over_20pct": 16,
+        "max_exposure": 0.8867,
+        "median_exposure_used": 0.14,
+        "projection_min": 115.65,
+        "projection_median": 115.65,
+        "projection_max": 115.65,
+        "salary_min": 49750,
+        "salary_median": 49750,
+        "salary_max": 49750,
+        "team_block_median": 2,
+        "team_block_max": 3,
+        "best_ratio": 1.0,
+        "median_ratio": 1.0,
+        "worst_ratio": 1.0
+      }
+    },
+    {
+      "name": "generated/stack",
+      "impl": "milp_ortools_cpsat",
+      "params": {
+        "requested": 150,
+        "produced": 150
+      },
+      "metric": "seconds",
+      "n": 2,
+      "mean": 35.80683297448559,
+      "median": 35.80683297448559,
+      "stddev": 0.33076886923723653,
+      "min": 35.57294406404253,
+      "detail": "+ a 4-hitter team stack",
+      "quality": {
+        "optimum": 115.65,
+        "median_percentile": 100.0,
+        "p10_percentile": 100.0,
+        "reference_population": 2000,
+        "lineups": 150,
+        "distinct_players": 57,
+        "pool_size": 288,
+        "players_over_50pct": 7,
+        "players_over_20pct": 15,
+        "max_exposure": 0.8333,
+        "median_exposure_used": 0.08,
+        "projection_min": 113.59,
+        "projection_median": 113.62,
+        "projection_max": 115.65,
+        "salary_min": 49750,
+        "salary_median": 49750,
+        "salary_max": 49750,
+        "team_block_median": 4,
+        "team_block_max": 5,
+        "best_ratio": 1.0,
+        "median_ratio": 0.9824,
+        "worst_ratio": 0.9822
+      }
+    },
+    {
+      "name": "generated/head-to-head",
+      "impl": "mlb_dfs_solver_rust",
+      "params": {},
+      "metric": "quality",
+      "n": 1,
+      "mean": 2.3399479687213898e-07,
+      "median": 2.3399479687213898e-07,
+      "stddev": 0,
+      "min": 2.3399479687213898e-07,
+      "quality": {
+        "ours_lineups": 150,
+        "ours_distinct_players": 59,
+        "ours_pool_size": 288,
+        "ours_players_over_50pct": 4,
+        "ours_players_over_20pct": 15,
+        "ours_max_exposure": 1.0,
+        "ours_median_exposure_used": 0.0733,
+        "ours_projection_min": 98.9,
+        "ours_projection_median": 105.17,
+        "ours_projection_max": 111.47,
+        "ours_salary_min": 49750,
+        "ours_salary_median": 49750,
+        "ours_salary_max": 49750,
+        "ours_team_block_median": 3,
+        "ours_team_block_max": 5,
+        "solver_lineups": 150,
+        "solver_distinct_players": 33,
+        "solver_pool_size": 288,
+        "solver_players_over_50pct": 9,
+        "solver_players_over_20pct": 16,
+        "solver_max_exposure": 0.8867,
+        "solver_median_exposure_used": 0.14,
+        "solver_projection_min": 115.65,
+        "solver_projection_median": 115.65,
+        "solver_projection_max": 115.65,
+        "solver_salary_min": 49750,
+        "solver_salary_median": 49750,
+        "solver_salary_max": 49750,
+        "solver_team_block_median": 2,
+        "solver_team_block_max": 3
+      }
+    },
+    {
+      "name": "generated/profiles",
+      "impl": "mlb_dfs_solver_rust",
+      "params": {},
+      "metric": "quality",
+      "n": 1,
+      "mean": 2.8102658689022064e-07,
+      "median": 2.8102658689022064e-07,
+      "stddev": 0,
+      "min": 2.8102658689022064e-07,
+      "quality": {
+        "standard_ownership": 0.1134,
+        "contrarian_ownership": 0.1117
+      }
+    },
+    {
+      "name": "contest/10k draw",
+      "impl": "mlb_dfs_solver_rust",
+      "params": {
+        "requested": 10000,
+        "produced": 8650
+      },
+      "metric": "seconds",
+      "n": 5,
+      "mean": 0.3158499644137919,
+      "median": 0.31373281800188124,
+      "stddev": 0.004345149368809745,
+      "min": 0.31234055501408875,
+      "detail": "10,000 lineups, 432-player slate, stacked, 60% exposure cap",
+      "quality": {
+        "requested_exposure_cap": 0.6,
+        "lineups": 8650,
+        "distinct_players": 215,
+        "pool_size": 432,
+        "players_over_50pct": 3,
+        "players_over_20pct": 10,
+        "max_exposure": 0.6936,
+        "median_exposure_used": 0.0175,
+        "projection_min": 94.63,
+        "projection_median": 107.26,
+        "projection_max": 119.68,
+        "salary_min": 49000,
+        "salary_median": 49750,
+        "salary_max": 49750,
+        "team_block_median": 4,
+        "team_block_max": 6
+      }
+    },
+    {
+      "name": "contest/10k draw",
+      "impl": "milp_ortools_cpsat",
+      "params": {
+        "requested": 25,
+        "produced": 25,
+        "extrapolated_to": 10000
+      },
+      "metric": "seconds",
+      "n": 1,
+      "mean": 6.8970489429775625,
+      "median": 6.8970489429775625,
+      "stddev": 0,
+      "min": 6.8970489429775625,
+      "detail": "10,000 lineups, 432-player slate, stacked, 60% exposure cap",
+      "quality": {
+        "requested_exposure_cap": 0.6,
+        "lineups": 25,
+        "distinct_players": 40,
+        "pool_size": 432,
+        "players_over_50pct": 8,
+        "players_over_20pct": 17,
+        "max_exposure": 0.6,
+        "median_exposure_used": 0.2,
+        "projection_min": 117.68,
+        "projection_median": 119.71,
+        "projection_max": 119.71,
+        "salary_min": 49750,
+        "salary_median": 49750,
+        "salary_max": 49750,
+        "team_block_median": 4,
+        "team_block_max": 5
+      }
+    }
+  ]
+}

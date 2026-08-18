@@ -39,6 +39,20 @@ jobs:
       - name: metadata is valid
         run: uvx twine check --strict dist/*
 
+      # twine check validates metadata only, never the file manifest. The
+      # baselines are reference-only and must never reach a user's install; the
+      # sdist include-list is hand-maintained, so assert it here.
+      - name: no benchmark or test code in the artifacts
+        run: |
+          if tar tzf dist/*.tar.gz | grep -E '(^|/)(benchmarks|tests)/'; then
+            echo "sdist contains benchmark or test code" >&2
+            exit 1
+          fi
+          if unzip -l dist/*.whl | grep -E '(^|/)(benchmarks|tests)/'; then
+            echo "wheel contains benchmark or test code" >&2
+            exit 1
+          fi
+
       # TestPyPI is skipped on purpose: separate namespace, different dependency
       # universe, so a successful upload there proves little. This proves the
       # actual thing — the built wheel installs clean and imports.
