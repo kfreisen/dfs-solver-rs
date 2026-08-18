@@ -3,10 +3,6 @@
 Fast roster optimization: randomized greedy lineup construction and lazy-greedy submodular
 portfolio selection, implemented in Rust.
 
-> **Status: ready for its first release.** The code, tests, benchmarks and docs
-> are complete. `0.1.0` publishes when the `v0.1.0` tag is pushed; until then,
-> install from source.
-
 New here? [**How it works**](https://kfreisen.github.io/dfs-solver-rs/concepts/) is the
 background: what the problem is, where a solver is and is not the right tool, and what each stage
 does. The short version follows.
@@ -178,14 +174,12 @@ and on how far you trust your projections.
 
 ## Install
 
-Once the first release is on PyPI:
-
 ```bash
 pip install dfs-solver-rs
 ```
 
-The release workflow builds binary wheels for Linux (x86-64, aarch64), macOS (arm64, x86-64),
-and Windows (x86-64). Installing from source requires a Rust toolchain:
+Binary wheels are published for Linux (x86-64, aarch64), macOS (arm64, x86-64), and Windows
+(x86-64), against Python 3.11 and later. Installing from source requires a Rust toolchain:
 
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
