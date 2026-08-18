@@ -1,14 +1,17 @@
 """Pure-Python transcription of the greedy construction algorithm.
 
-This is the most valuable file in the package and it is not shipped in the wheel.
-It serves three jobs at once:
+This file exists to be read and to be measured against, never to be used: it is
+not shipped in the wheel, not supported as an API, and deliberately slow. It
+serves three jobs at once:
 
 1. **The specification.** The Rust is fast and the Rust is not readable. This is
    the same algorithm at a speed nobody cares about, written so the algorithm can
    be checked by reading it.
-2. **The parity oracle.** `tests/test_parity.py` asserts this and the kernel
-   produce *identical* lineups for the same seed. That is what makes a speedup
-   number mean something: the two implementations are doing the same job.
+2. **The parity oracle.** `tests/test_parity.py` asserts this and the kernel do
+   the same job — every lineup valid, comparable yield and spread, the same
+   response to constraints tightening. That is what makes a speedup number mean
+   something. (See the determinism note below for why the assertion is not
+   lineup-for-lineup identity.)
 3. **The benchmark baseline.** The headline comparison is against MILP, but the
    Python-versus-Rust number is the honest measure of what the port bought.
 

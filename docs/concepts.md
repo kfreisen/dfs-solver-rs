@@ -11,7 +11,8 @@ contest type before any of the why, start from [recipes](recipes.md).
 **One roster.** A few hundred players with a salary, a projection and a position;
 fill the slots, stay under the cap, maximize projected points. This is an integer
 program. `benchmarks/baselines/milp.py` solves it exactly in under a second and
-beats everything else here. If you enter one lineup, use it.
+beats everything else here. If you enter one lineup, use it (from the
+repository — it is not part of the installed package).
 
 **Many rosters.** Contests take up to 150 entries, and a field simulation takes a
 hundred thousand. Repeatedly solving and forbidding the last answer gives the top
@@ -301,6 +302,12 @@ only the ordering; a lineup is still worth the sum of its players' projections.
 | `0.75` (default) | flat quality through `1.0`, with more of the pool retained |
 | `1.0` | rank by surplus over what a point costs on average. Found the exact optimum on the slate it was tested against |
 | `1.25` | cliff. The candidate pool collapsed from 15,000 distinct lineups to 500, every attempt converging on the same cheap players |
+
+The default sits short of `1.0` on purpose. Quality is flat between `0.75` and
+`1.0` on every constraint rung tested, and just above `1.0` is the cliff in the
+last row — once cheap players dominate the ranking outright, every attempt
+converges on the same ones. Defaulting inside the flat region buys distance from
+the cliff at no measured cost.
 
 Pricing narrows the pool even at the default — a sharper objective makes attempts
 agree more often. On the benchmark slate the pool fell from 20,000 distinct

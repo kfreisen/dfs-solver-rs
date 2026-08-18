@@ -26,8 +26,10 @@ package supplies neither, and a benchmark shipping its own would be grading its 
 ## The scenarios
 
 Each is a configuration somebody actually plays, and they are cumulative — every row adds one
-thing a player turns on. `scenarios.py` defines them and documents what is *not* expressible,
-which is currently the secondary stack every real MME player wants.
+thing a player turns on. `scenarios.py` defines them and documents what is *not* expressible:
+"every team used must supply at least two players", a universal constraint the existential
+`min_stack` form cannot state. (The 4-2 secondary stack *is* expressible, and the `stack-4-2`
+rung measures it.)
 
 Sizes come from the game: 150 entries is a DraftKings MLB classic maximum, cash is played a few
 entries deep, and the contest-scale row asks for 10,000 because that is what a field simulation

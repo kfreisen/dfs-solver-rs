@@ -1,7 +1,7 @@
 # How benchmarks work
 
-Every package here claims to be faster than something. This page describes what those claims
-rest on, because a speedup number with no stated method is decoration.
+This package claims to be faster than something. This page describes what that claim
+rests on, because a speedup number with no stated method is decoration.
 
 ## The baseline is real code
 
@@ -13,17 +13,24 @@ and covered by tests.
 Keeping them alive costs something, and it buys the only thing that makes the comparison
 meaningful.
 
+The solver baseline is OR-Tools' CP-SAT: open source, installs everywhere, and markedly
+faster on this problem shape than the bundled-CBC route PuLP offers — the baseline carried a
+CBC formulation until it was benchmarked, and beating the slower of two free solvers was the
+weaker claim anyway. Gurobi would be faster still and is absent on purpose: it needs a
+commercial license, so a benchmark nobody can reproduce.
+
 ## Parity is asserted before speed is measured
 
 `tests/test_parity.py` runs the baseline and the optimized implementation on the same inputs and
 asserts they agree. It runs on every change, in ordinary CI, on small inputs.
 
 This is the load-bearing test here. A fast path that has quietly changed its behavior
-will produce an excellent benchmark number, and only parity catches it. Where exact equality is
-not the right assertion — a blocking scheme is allowed to be a search heuristic — the parity test
-measures and bounds the difference instead, and the benchmark reports it alongside the timing.
-A matcher that is 100× faster and loses 4% of true matches is a regression, so where that
-applies the benchmark reports quality alongside speed.
+will produce an excellent benchmark number, and only parity catches it. Parity does not mean
+byte-identical output — that would require reimplementing the kernel's RNG in Python. It means
+the properties a caller relies on: every lineup valid under an independently written validator,
+comparable yield and spread, and the same response to constraints tightening. The precise claim
+is in `tests/test_parity.py`'s docstring, and the benchmark reports quality alongside speed so a
+faster path that produces worse lineups reads as the regression it is.
 
 ## CI never times anything
 
@@ -108,9 +115,9 @@ swapped". Randomized construction produces a wide one.
 ### `in >50% of entries`
 
 How many players appear in more than half the draw. A concentration measure that
-actually discriminates, which "share of the most-used player" does not: on this
-slate that is 100% for every implementation and every configuration, because the
-cheapest good pitcher is taken every time. See `max_exposure` in the per-scenario
+discriminates where "share of the most-used player" often does not: a single
+must-play ace can push the top share high for every implementation while the
+rest of the draws differ completely. See `max_exposure` in the per-scenario
 detail for the raw figure.
 
 Where an exposure cap is set, read the realized figure rather than the cap
@@ -124,8 +131,9 @@ implementations**. A solver is complete and returns all of them. Randomized
 construction is not: when constraints bite it runs out of legal rosters it has
 not already found.
 
-Both are shown because a speedup dividing our time for 84 lineups by a solver's
-time for 150 is not a ratio.
+Both are shown because a speedup dividing one side's time for a partial draw by
+the other's time for a full one is not a ratio. Where the yields differ, the
+tables dash the speedup cell and let the yield columns carry the comparison.
 
 ### `no-good cuts`
 
@@ -136,14 +144,19 @@ next time. Solve again for the second-best roster, then the third.
 It is the standard way to enumerate solutions in order, and it is why the solver's
 draw looks the way it does. It is not the only way to get diversity out of a
 solver — an overlap constraint bounding how many players a new lineup may share
-with each earlier one is the other common technique, and it is a fairer
-comparison at 150 entries. It is also markedly slower, which is why the
-contest-scale table exists.
+with each earlier one is the other common technique, and a fairer comparison at
+150 entries. Both formulations are measured: the `mme` scenario carries a second
+solver row built with the overlap constraint, which spreads across the slate
+properly and pays for it in the time column. Comparing only against no-good cuts
+would understate what a solver can do; only against the overlap formulation
+would understate its speed.
 
 ### Contest scale
 
-Both implementations are run to a full 10,000-lineup draw. Nothing in that table
-is extrapolated.
+Nothing in that table is extrapolated. The kernel is run to the full
+10,000-lineup draw. The solver runs under a wall-clock budget — 10,000 no-good-cut
+solves have no natural upper bound — and its row reports how many lineups the
+budget bought, which is the honest form of the claim.
 
 An earlier version measured the solver on a 25-lineup prefix and multiplied,
 assuming per-lineup cost is flat in the count. It is not: every solve carries one

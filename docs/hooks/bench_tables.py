@@ -106,12 +106,15 @@ def render_timing_case(case_name: str, measurements: list[dict[str, Any]]) -> li
     ]
 
     for m in ranked:
+        same_yield = m.get("params", {}).get("produced") == best.get("params", {}).get("produced")
         if m is best:
             relative = "fastest"
-        elif best["median"]:
+        elif best["median"] and same_yield:
             # multiplication sign is the intended typography in the table.
             relative = f"{m['median'] / best['median']:.1f}× slower"  # noqa: RUF001
         else:
+            # Unequal draws: dividing the times is not a ratio. The Returned
+            # column carries the comparison.
             relative = "—"
         p = m.get("params", {})
         q = m.get("quality", {})

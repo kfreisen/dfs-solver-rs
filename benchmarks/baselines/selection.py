@@ -2,7 +2,8 @@
 
 The counterpart to `reference.py`, serving the same three jobs for the selection
 half: it is the readable statement of the algorithm, the parity oracle, and the
-baseline the Rust kernel is measured against.
+baseline the Rust kernel is measured against. Like everything in this package it
+is reference-only — never shipped, never a supported API.
 
 Unlike the construction oracle, this one can be held to *exact* equality. There
 is no random number generator involved — selection is deterministic given a score

@@ -31,7 +31,7 @@ from mlb_dfs_solver.presets import DK_MLB_CLASSIC
 
 r = recipes.cash(DK_MLB_CLASSIC, seed=1)
 lineups = r.build(pool)
-scores = score_lineups(pool, r.spec, lineups, universe)   # universe is yours
+scores = score_lineups(pool, r.spec, lineups, universe)  # universe is yours
 entries = lineups[r.select(scores, line=cash_line)]
 ```
 
@@ -53,7 +53,7 @@ proves the optimum; nothing here does. The `single-entry` row in
 [the benchmarks](benchmarks.md) exists to show that case rather than hide it.
 
 ```python
-r = recipes.single_entry(DK_MLB_CLASSIC, seed=1)   # 300 candidates, keep 1
+r = recipes.single_entry(DK_MLB_CLASSIC, seed=1)  # 300 candidates, keep 1
 lineups = r.build(pool)
 scores = score_lineups(pool, r.spec, lineups, universe)
 entry = lineups[r.select(scores, line=cash_line)]
@@ -62,7 +62,8 @@ entry = lineups[r.select(scores, line=cash_line)]
 Use this when you are already in this pipeline — same pool, same simulator,
 same objects — and the gap between the provable best lineup and the best of
 three hundred is smaller than your projection error. When you are not, use a
-solver: `benchmarks/baselines/milp.py` contains a real one.
+solver: `benchmarks/baselines/milp.py` contains a real one — in the repository
+only, not the installed package, so vendor it.
 
 ## Tournament (GPP / MME)
 
@@ -85,14 +86,16 @@ HITTERS = ("C", "SS", "2B", "3B", "1B", "OF")
 spec = replace(
     DK_MLB_CLASSIC,
     # A four-hitter team stack ...
-    groups=(*DK_MLB_CLASSIC.groups,
-            GroupConstraint(key="team", min_stack=4, slots=HITTERS)),
+    groups=(*DK_MLB_CLASSIC.groups, GroupConstraint(key="team", min_stack=4, slots=HITTERS)),
     # ... and no hitters against the rostered pitcher.
-    conflicts=(ConflictRule(left_key="opponent", right_key="team",
-                            left_positions=("P",), right_positions=HITTERS),),
+    conflicts=(
+        ConflictRule(
+            left_key="opponent", right_key="team", left_positions=("P",), right_positions=HITTERS
+        ),
+    ),
 )
 
-r = recipes.gpp(spec, seed=1)                      # 150 entries, diversity on
+r = recipes.gpp(spec, seed=1)  # 150 entries, diversity on
 lineups = r.build(pool)
 scores = score_lineups(pool, spec, lineups, universe)
 entries = lineups[r.select(scores, line=win_line, lineups=lineups)]
@@ -118,7 +121,7 @@ wants tens of thousands of entries. This is the build where the solver stops
 being an alternative at all — see the `contest-scale` benchmark row.
 
 ```python
-r = recipes.candidate_pool(spec, seed=1)           # 20,000, spread wide
+r = recipes.candidate_pool(spec, seed=1)  # 20,000, spread wide
 candidates = r.build(pool)
 ```
 
@@ -162,7 +165,7 @@ r = dataclasses.replace(
     recipes.gpp(spec, seed=1, locks=[ace, bargain_bat]),
     max_exposure=0.6,
 )
-lineups = r.build(pool)                                # locks in every lineup
+lineups = r.build(pool)  # locks in every lineup
 scores = score_lineups(pool, spec, lineups, universe)
 entries = lineups[r.select(scores, line=win_line, lineups=lineups)]
 ```

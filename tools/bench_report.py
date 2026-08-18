@@ -37,6 +37,8 @@ CONTEST_SCENARIO = "contest-scale"
 
 OURS = "mlb_dfs_solver_rust"
 PYTHON = "reference_python"
+# The selection stage records its oracle under its own name.
+SELECTION_PYTHON = "selection_reference_python"
 SOLVER = "milp_ortools_cpsat"
 SOLVER_OVERLAP = "milp_ortools_cpsat_overlap"
 
@@ -194,18 +196,23 @@ def _workflow_section(report: dict[str, Any]) -> list[str]:
 def _scenario_rows(grouped: dict[str, dict[str, dict[str, Any]]]) -> list[str]:
     """One table row per scenario, both yields shown.
 
-    Both, because a speedup dividing our time for 14 lineups by a solver's time
-    for 25 is not a ratio, and a single "returned" column invites that reading.
+    Both, because a speedup dividing one side's time for a partial draw by the
+    other's time for a full one is not a ratio, and a single "returned" column
+    invites that reading. The speedup cell is dashed whenever the yields differ,
+    for the same reason.
     """
     kept: list[str] = []
     for name, impls in grouped.items():
         ours = impls.get(OURS)
         if ours is None:
             continue
-        python, solver = impls.get(PYTHON), impls.get(SOLVER)
+        python = impls.get(PYTHON) or impls.get(SELECTION_PYTHON)
+        solver = impls.get(SOLVER)
         speedup = (
             f"{solver['median'] / ours['median']:,.0f}×"  # noqa: RUF001
-            if solver and ours["median"]
+            if solver
+            and ours["median"]
+            and solver["params"]["produced"] == ours["params"]["produced"]
             else "—"
         )
         solver_returned = (
@@ -249,6 +256,20 @@ def _scenario_notes(grouped: dict[str, dict[str, dict[str, Any]]]) -> list[str]:
             "remaining candidate covers a new outcome, so a pool can be "
             "exhausted before the count is reached. That is the objective "
             "working, not a shortfall."
+        )
+    mismatched = [
+        name
+        for name, impls in grouped.items()
+        if impls.get(OURS)
+        and impls.get(SOLVER)
+        and impls[SOLVER]["params"]["produced"] != impls[OURS]["params"]["produced"]
+    ]
+    if mismatched:
+        rows = ", ".join(f"`{name}`" for name in mismatched)
+        notes.append(
+            f"No speedup is printed for {rows}: the two sides returned different "
+            "numbers of lineups, and dividing the times of unequal draws is not "
+            "a ratio. The yield columns carry the comparison instead."
         )
     return [x for note in notes for x in ("", note)]
 

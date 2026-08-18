@@ -19,7 +19,7 @@ branches.
 
 ## Scope
 
-In scope: anything under `src/` (or `python/`), and the release workflow.
+In scope: anything under `python/` or `rust/`, and the release workflow.
 
 Out of scope: the benchmark baselines under `benchmarks/baselines/`, which exist to
 be compared against and are not part of any published distribution.

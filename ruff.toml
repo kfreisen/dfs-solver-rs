@@ -1,8 +1,8 @@
-# The single ruff configuration for every package in this repo.
+# The single ruff configuration for this repo.
 #
 # Ruff only treats a pyproject.toml as a config file when it contains a
-# [tool.ruff] section. No package pyproject may define one — that would silently
-# detach it from this baseline. tools/check_no_local_ruff.py enforces it.
+# [tool.ruff] section. Neither pyproject here (root, docs/) may define one —
+# that would silently detach its tree from this baseline.
 
 line-length = 100
 target-version = "py311"

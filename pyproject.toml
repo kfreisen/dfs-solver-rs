@@ -31,7 +31,6 @@ dependencies = ["numpy>=1.26"]
 Homepage = "https://github.com/kfreisen/mlb-dfs-solver"
 Documentation = "https://kfreisen.github.io/mlb-dfs-solver/"
 Source = "https://github.com/kfreisen/mlb-dfs-solver"
-Changelog = "https://github.com/kfreisen/mlb-dfs-solver/blob/main/CHANGELOG.md"
 Issues = "https://github.com/kfreisen/mlb-dfs-solver/issues"
 
 [build-system]
