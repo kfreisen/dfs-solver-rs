@@ -6,6 +6,10 @@ name: release
 # repository, this workflow filename, and the `pypi` environment — all three are
 # matched exactly, and a mismatch surfaces as a 403 that does not say which field
 # is wrong.
+#
+# guard -> {sdist, wheels} -> verify -> publish. Everything upstream of `verify`
+# only produces artifacts; every assertion that can look at the whole release at
+# once is made there, on exactly the files that will be uploaded.
 
 on:
   push:
@@ -15,16 +19,16 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  # A tag that disagrees with pyproject.toml would publish a version nobody can
+  # find in the repository. This is seconds of work and gates six build jobs, so
+  # it runs alone and first rather than inside one of them.
+  guard:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
       - uses: astral-sh/setup-uv@v7
         with:
           python-version: '3.12'
-
-      # A tag that disagrees with pyproject.toml would publish a version nobody
-      # can find in the repository. Catch it before anything is built.
       - name: tag matches project version
         run: |
           expected="${{ github.ref_name }}"
@@ -35,7 +39,118 @@ jobs:
             exit 1
           fi
 
-      - run: uv build
+  sdist:
+    needs: guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: '3.12'
+
+      - uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist
+
+      # The sdist is what anyone on an unlisted platform compiles, and its file
+      # manifest is hand-maintained in [tool.maturin] include. Nothing else in
+      # this workflow would notice a crate missing from that list: the wheel jobs
+      # build from the checkout, not the tarball. So build it the way a user
+      # would, from the tarball alone, with no wheel available to fall back to.
+      - name: sdist builds from source
+        run: |
+          uv run --no-project --isolated --python 3.12 \
+            --with "$(echo dist/*.tar.gz)" --no-binary-package dfs-solver-rs \
+            python -c "import dfs_solver; print(dfs_solver.__version__, dfs_solver.active_isa())"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-sdist
+          path: dist/
+          if-no-files-found: error
+
+  wheels:
+    needs: guard
+    name: wheel (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Every entry builds on its own architecture. Cross-compiling aarch64
+        # from an x86-64 runner would work, but then nothing would ever load the
+        # resulting wheel before a user does — and the runtime AVX2 dispatch and
+        # the abi3 boundary are precisely the parts that only fail at import.
+        # Native runners are free for public repositories, so there is no reason
+        # to ship a wheel no machine has imported.
+        include:
+          - { platform: linux-x86_64,   runner: ubuntu-latest,    target: x86_64 }
+          - { platform: linux-aarch64,  runner: ubuntu-24.04-arm, target: aarch64 }
+          # macos-15-intel, not macos-13: GitHub retired the 13 image. Intel
+          # macOS runners are on their way out generally, and when the last one
+          # goes this row is the one to drop -- an x86-64 Mac can install the
+          # sdist, which the sdist job proves builds.
+          - { platform: macos-x86_64,   runner: macos-15-intel,   target: x86_64 }
+          - { platform: macos-aarch64,  runner: macos-14,         target: aarch64 }
+          - { platform: windows-x86_64, runner: windows-latest,   target: x64 }
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: '3.12'
+
+      - uses: PyO3/maturin-action@v1
+        with:
+          command: build
+          target: ${{ matrix.target }}
+          # --release is not maturin's default and matters here: the profile
+          # carries lto and codegen-units = 1, which is the performance the
+          # benchmarks in the README report.
+          args: --release --out dist
+          # Linux only. Builds inside the manylinux container so the wheel gets a
+          # manylinux_* platform tag — PyPI rejects a bare `linux_x86_64` upload,
+          # and a wheel tagged that way is the one thing here that cannot be
+          # fixed after the fact. Ignored by the macOS and Windows runners.
+          manylinux: auto
+
+      # The one place abi3's central claim is tested: that a wheel built against
+      # the 3.11 ABI loads unmodified on every later interpreter. Building it
+      # proves nothing — an abi3 build never sees the versions it promises to run
+      # on. Floor and ceiling only; the interior is by construction, since all
+      # four interpreters load this same cp311-abi3 file.
+      - name: built wheel installs and imports
+        shell: bash
+        run: |
+          for py in 3.11 3.14; do
+            echo "--- python $py"
+            uv run --no-project --isolated --python "$py" \
+              --with "$(echo dist/*.whl)" \
+              python -c "import dfs_solver; print(dfs_solver.__version__, dfs_solver.active_isa())"
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.platform }}
+          path: dist/
+          if-no-files-found: error
+
+  # Assertions that need the whole release in one directory. Splitting these out
+  # also means they run once rather than six times, against the exact set of
+  # files the publish job will upload.
+  verify:
+    needs: [sdist, wheels]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dist-*
+          merge-multiple: true
+          path: dist
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: '3.12'
+
       - name: metadata is valid
         run: uvx twine check --strict dist/*
 
@@ -48,26 +163,36 @@ jobs:
             echo "sdist contains benchmark or test code" >&2
             exit 1
           fi
-          if unzip -l dist/*.whl | grep -E '(^|/)(benchmarks|tests)/'; then
-            echo "wheel contains benchmark or test code" >&2
-            exit 1
-          fi
-
-      # TestPyPI is skipped on purpose: separate namespace, different dependency
-      # universe, so a successful upload there proves little. This proves the
-      # actual thing — the built wheel installs clean and imports.
-      # Floor and ceiling, from the one cp311-abi3 wheel. This is the only place
-      # abi3's central claim gets tested: that a wheel built against the 3.11 ABI
-      # loads unmodified on every later interpreter. Building it proves nothing —
-      # an abi3 build never sees the versions it promises to run on.
-      - name: built wheel installs and imports
-        run: |
-          for py in 3.11 3.14; do
-            echo "--- python $py"
-            uv run --no-project --isolated --python "$py" \
-              --with "$(echo dist/*.whl)" \
-              python -c "import dfs_solver; print(dfs_solver.__version__)"
+          for whl in dist/*.whl; do
+            if unzip -l "$whl" | grep -E '(^|/)(benchmarks|tests)/'; then
+              echo "$whl contains benchmark or test code" >&2
+              exit 1
+            fi
           done
+
+      # A platform whose build job was skipped, or silently dropped from the
+      # matrix, would otherwise publish a release that just quietly has no wheel
+      # for it — installers fall back to the sdist and users need a Rust
+      # toolchain. Name the expected set rather than counting files.
+      - name: every platform is present
+        run: |
+          ls -1 dist/
+          missing=0
+          # Not pinned to a glibc floor: `manylinux: auto` picks the container,
+          # and a newer maturin moving that floor is fine. A bare `linux_*` tag
+          # is not, and is what these patterns exist to catch.
+          for tag in 'manylinux.*_x86_64' 'manylinux.*_aarch64' \
+                     'macosx_.*_x86_64' 'macosx_.*_arm64' 'win_amd64'; do
+            if ! ls -1 dist/*.whl | grep -qE "$tag"; then
+              echo "no wheel matching $tag" >&2
+              missing=1
+            fi
+          done
+          if ! ls -1 dist/*.tar.gz >/dev/null 2>&1; then
+            echo "no sdist" >&2
+            missing=1
+          fi
+          exit $missing
 
       - uses: actions/upload-artifact@v4
         with:
@@ -76,7 +201,7 @@ jobs:
           if-no-files-found: error
 
   publish:
-    needs: build
+    needs: verify
     runs-on: ubuntu-latest
     # Protect this environment with a required reviewer in the repository
     # settings. It is the last thing between a mistaken tag push and a permanent,
