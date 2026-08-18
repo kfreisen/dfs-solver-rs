@@ -13,8 +13,8 @@ from itertools import combinations
 
 import pytest
 from baselines.milp import solve_milp_ortools, solve_portfolio_ortools
-from mlb_dfs_solver.pool import PlayerPool
-from mlb_dfs_solver.spec import GroupConstraint, RosterSpec
+from dfs_solver.pool import PlayerPool
+from dfs_solver.spec import GroupConstraint, RosterSpec
 
 pytest.importorskip("ortools")
 

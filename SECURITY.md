@@ -3,7 +3,7 @@
 ## Reporting a vulnerability
 
 Please report security issues privately through GitHub's
-[private vulnerability reporting](https://github.com/kfreisen/mlb-dfs-solver/security/advisories/new)
+[private vulnerability reporting](https://github.com/kfreisen/dfs-solver-rs/security/advisories/new)
 rather than opening a public issue.
 
 Include the affected version, what an attacker can do with the issue, and a

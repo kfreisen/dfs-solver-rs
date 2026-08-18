@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 if TYPE_CHECKING:
-    from mlb_dfs_solver.pool import PlayerPool
+    from dfs_solver.pool import PlayerPool
 
 __all__ = ["simulate"]
 

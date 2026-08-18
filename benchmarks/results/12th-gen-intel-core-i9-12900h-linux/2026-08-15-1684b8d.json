@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "package": "mlb-dfs-solver",
+  "package": "dfs-solver-rs",
   "version": "0.0.1.dev0",
   "git_sha": "1684b8d",
   "timestamp": "2026-08-15T19:32:20+00:00",
@@ -15,7 +15,7 @@
   "cases": [
     {
       "name": "build/10",
-      "impl": "mlb_dfs_solver_rust",
+      "impl": "dfs_solver_rust",
       "params": {
         "num_lineups": 10,
         "pool": 288,
@@ -31,7 +31,7 @@
     },
     {
       "name": "build/150",
-      "impl": "mlb_dfs_solver_rust",
+      "impl": "dfs_solver_rust",
       "params": {
         "num_lineups": 150,
         "pool": 288,
@@ -47,7 +47,7 @@
     },
     {
       "name": "build/1000",
-      "impl": "mlb_dfs_solver_rust",
+      "impl": "dfs_solver_rust",
       "params": {
         "num_lineups": 1000,
         "pool": 288,
@@ -63,7 +63,7 @@
     },
     {
       "name": "build/20000",
-      "impl": "mlb_dfs_solver_rust",
+      "impl": "dfs_solver_rust",
       "params": {
         "num_lineups": 20000,
         "pool": 288,
@@ -159,7 +159,7 @@
     },
     {
       "name": "constraints/bare",
-      "impl": "mlb_dfs_solver_rust",
+      "impl": "dfs_solver_rust",
       "params": {
         "rung": "bare",
         "requested": 25,
@@ -176,7 +176,7 @@
     },
     {
       "name": "constraints/caps",
-      "impl": "mlb_dfs_solver_rust",
+      "impl": "dfs_solver_rust",
       "params": {
         "rung": "caps",
         "requested": 25,
@@ -193,7 +193,7 @@
     },
     {
       "name": "constraints/floor",
-      "impl": "mlb_dfs_solver_rust",
+      "impl": "dfs_solver_rust",
       "params": {
         "rung": "floor",
         "requested": 25,
@@ -210,7 +210,7 @@
     },
     {
       "name": "constraints/games",
-      "impl": "mlb_dfs_solver_rust",
+      "impl": "dfs_solver_rust",
       "params": {
         "rung": "games",
         "requested": 25,
@@ -227,7 +227,7 @@
     },
     {
       "name": "constraints/conflicts",
-      "impl": "mlb_dfs_solver_rust",
+      "impl": "dfs_solver_rust",
       "params": {
         "rung": "conflicts",
         "requested": 25,
@@ -244,7 +244,7 @@
     },
     {
       "name": "constraints/stack",
-      "impl": "mlb_dfs_solver_rust",
+      "impl": "dfs_solver_rust",
       "params": {
         "rung": "stack",
         "requested": 25,
@@ -261,7 +261,7 @@
     },
     {
       "name": "constraints/locks",
-      "impl": "mlb_dfs_solver_rust",
+      "impl": "dfs_solver_rust",
       "params": {
         "rung": "locks",
         "requested": 25,
@@ -278,7 +278,7 @@
     },
     {
       "name": "constraints/exposure",
-      "impl": "mlb_dfs_solver_rust",
+      "impl": "dfs_solver_rust",
       "params": {
         "rung": "exposure",
         "requested": 25,
@@ -567,7 +567,7 @@
     },
     {
       "name": "generated/floor",
-      "impl": "mlb_dfs_solver_rust",
+      "impl": "dfs_solver_rust",
       "params": {
         "requested": 150,
         "produced": 150
@@ -606,7 +606,7 @@
     },
     {
       "name": "generated/stack",
-      "impl": "mlb_dfs_solver_rust",
+      "impl": "dfs_solver_rust",
       "params": {
         "requested": 150,
         "produced": 150
@@ -723,7 +723,7 @@
     },
     {
       "name": "generated/head-to-head",
-      "impl": "mlb_dfs_solver_rust",
+      "impl": "dfs_solver_rust",
       "params": {},
       "metric": "quality",
       "n": 1,
@@ -766,7 +766,7 @@
     },
     {
       "name": "generated/profiles",
-      "impl": "mlb_dfs_solver_rust",
+      "impl": "dfs_solver_rust",
       "params": {},
       "metric": "quality",
       "n": 1,
@@ -781,7 +781,7 @@
     },
     {
       "name": "contest/10k draw",
-      "impl": "mlb_dfs_solver_rust",
+      "impl": "dfs_solver_rust",
       "params": {
         "requested": 10000,
         "produced": 8650

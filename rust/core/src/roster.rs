@@ -856,7 +856,7 @@ mod tests {
     use super::*;
 
     /// DraftKings MLB classic, expressed in the general form. Used throughout the
-    /// tests and mirrored by `mlb_dfs_solver.presets.DK_MLB_CLASSIC` on the Python side —
+    /// tests and mirrored by `dfs_solver.presets.DK_MLB_CLASSIC` on the Python side —
     /// the parity test against the reference implementation is only meaningful if
     /// these two agree.
     fn dk_mlb(team_ids: Vec<i32>) -> RosterSpec {

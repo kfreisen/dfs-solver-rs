@@ -1,7 +1,7 @@
 """The kernel and the reference implementation must agree.
 
 This is the most important test file in the package. Every performance claim
-mlb_dfs_solver makes is a comparison against `benchmarks/baselines/reference.py`, and a
+dfs_solver makes is a comparison against `benchmarks/baselines/reference.py`, and a
 comparison only means something if both implementations do the same job. A fast
 path that has quietly changed its behavior produces an excellent benchmark number
 and a wrong answer.
@@ -25,7 +25,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 from baselines.reference import build_lineups_reference, is_valid, validity_report
-from mlb_dfs_solver import (
+from dfs_solver import (
     build_lineups,
     field_line,
     portfolio_value,
@@ -33,8 +33,8 @@ from mlb_dfs_solver import (
     select_portfolio,
     tail_line,
 )
-from mlb_dfs_solver.pool import PlayerPool
-from mlb_dfs_solver.spec import GroupConstraint, RosterSpec
+from dfs_solver.pool import PlayerPool
+from dfs_solver.spec import GroupConstraint, RosterSpec
 
 
 def test_kernel_lineups_are_all_valid(tiny_pool: PlayerPool, tiny_spec: RosterSpec) -> None:
@@ -198,7 +198,7 @@ def test_both_honour_a_salary_floor_that_forces_repair(
 
 def showdown_spec() -> RosterSpec:
     """A single-game shape over the tiny fixture's positions."""
-    from mlb_dfs_solver.spec import Slot
+    from dfs_solver.spec import Slot
 
     return RosterSpec(
         positions=("P", "C", "OF"),
@@ -261,7 +261,7 @@ def opposed_pool(spec: RosterSpec) -> PlayerPool:
 def test_both_enforce_a_conflict_rule(tiny_spec: RosterSpec) -> None:
     from dataclasses import replace
 
-    from mlb_dfs_solver.spec import ConflictRule
+    from dfs_solver.spec import ConflictRule
 
     spec = replace(
         tiny_spec,
@@ -299,7 +299,7 @@ def test_both_enforce_conflicts_through_salary_repair(tiny_spec: RosterSpec) -> 
     """
     from dataclasses import replace
 
-    from mlb_dfs_solver.spec import ConflictRule
+    from dfs_solver.spec import ConflictRule
 
     spec = replace(
         tiny_spec,

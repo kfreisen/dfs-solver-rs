@@ -54,12 +54,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
-from mlb_dfs_solver.presets import DK_MLB_CLASSIC, DK_MLB_SHOWDOWN
-from mlb_dfs_solver.spec import ConflictRule, GroupConstraint, RosterSpec
+from dfs_solver.presets import DK_MLB_CLASSIC, DK_MLB_SHOWDOWN
+from dfs_solver.spec import ConflictRule, GroupConstraint, RosterSpec
 from slates import HITTER_SLOTS, SALARY_FLOOR, make_showdown_slate, make_slate
 
 if TYPE_CHECKING:
-    from mlb_dfs_solver.pool import PlayerPool
+    from dfs_solver.pool import PlayerPool
 
 __all__ = ["SCENARIO_NAMES", "Scenario", "build_scenarios", "scenario_by_name"]
 

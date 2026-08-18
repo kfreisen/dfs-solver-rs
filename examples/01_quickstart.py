@@ -6,23 +6,23 @@ app = marimo.App(width="medium")
 
 @app.cell
 def _():
+    import dfs_solver
     import marimo as mo
-    import mlb_dfs_solver
     import numpy as np
-    from mlb_dfs_solver import PlayerPool, build_lineups
-    from mlb_dfs_solver.presets import DK_MLB_CLASSIC
+    from dfs_solver import PlayerPool, build_lineups
+    from dfs_solver.presets import DK_MLB_CLASSIC
 
-    return DK_MLB_CLASSIC, PlayerPool, build_lineups, mo, np, mlb_dfs_solver
+    return DK_MLB_CLASSIC, PlayerPool, build_lineups, mo, np, dfs_solver
 
 
 @app.cell
-def _(mo, mlb_dfs_solver):
+def _(mo, dfs_solver):
     mo.md(
         f"""
-        # mlb_dfs_solver — building a lineup pool
+        # dfs_solver — building a lineup pool
 
-        Version `{mlb_dfs_solver.__version__}`, kernel `{mlb_dfs_solver.native_version()}`,
-        SIMD path `{mlb_dfs_solver.active_isa()}`.
+        Version `{dfs_solver.__version__}`, kernel `{dfs_solver.native_version()}`,
+        SIMD path `{dfs_solver.active_isa()}`.
 
         That last one is worth noticing: wheels are built portably, without
         `target-cpu=native`, so the vector path is chosen when the process starts
@@ -95,7 +95,7 @@ def _(mo):
         """
         ## The specification
 
-        `DK_MLB_CLASSIC` is data, not a code path — nothing in mlb_dfs_solver branches on
+        `DK_MLB_CLASSIC` is data, not a code path — nothing in dfs_solver branches on
         which sport it is looking at. Note the two team constraints: "at most 6 from
         a team" and "at most 5 *hitters* from a team" are the same kind of rule,
         differing only in which slots they count. Five hitters plus that team's
@@ -220,7 +220,7 @@ def _(lineups, mo, pool):
         Both numbers are properties of what came back — count them off the array
         yourself. The equivalent figures for a solver enumerating with no-good
         cuts are on the
-        [benchmarks page](https://kfreisen.github.io/mlb-dfs-solver/benchmarks/),
+        [benchmarks page](https://kfreisen.github.io/dfs-solver-rs/benchmarks/),
         measured rather than asserted here.
         """
     )

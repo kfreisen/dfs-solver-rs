@@ -1,14 +1,14 @@
 """Ready-made roster specifications for common contest formats.
 
 These are data, not code paths — every one is an ordinary
-[`RosterSpec`][mlb_dfs_solver.spec.RosterSpec] you can copy and modify. There is no
+[`RosterSpec`][dfs_solver.spec.RosterSpec] you can copy and modify. There is no
 branch anywhere in this package that asks which sport it is looking at.
 
 Operators change these rules, sometimes mid-season. Treat a preset as a starting
 point that was correct when written, and check it against the contest you are
 actually entering.
 
-No preset declares a [`ConflictRule`][mlb_dfs_solver.spec.ConflictRule] or a
+No preset declares a [`ConflictRule`][dfs_solver.spec.ConflictRule] or a
 `min_stack`. Rules here are the ones the operator enforces; "no hitters against my
 pitcher" and "stack four bats" are strategies, and a preset that quietly imposed
 either would be wrong for anyone playing differently. Add them with
@@ -22,8 +22,8 @@ records carry the key:
 
 ```python
 from dataclasses import replace
-from mlb_dfs_solver.presets import DK_NFL_CLASSIC
-from mlb_dfs_solver.spec import GroupConstraint
+from dfs_solver.presets import DK_NFL_CLASSIC
+from dfs_solver.spec import GroupConstraint
 
 spec = replace(
     DK_NFL_CLASSIC,
@@ -34,7 +34,7 @@ spec = replace(
 
 from __future__ import annotations
 
-from mlb_dfs_solver.spec import GroupConstraint, RosterSpec, Slot
+from dfs_solver.spec import GroupConstraint, RosterSpec, Slot
 
 __all__ = [
     "DK_MLB_CLASSIC",

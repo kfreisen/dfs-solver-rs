@@ -1,14 +1,14 @@
 # Recipes
 
-[`build_lineups`][mlb_dfs_solver.greedy.build_lineups] takes twelve parameters,
-[`select_portfolio`][mlb_dfs_solver.select.select_portfolio] eight, and most of
+[`build_lineups`][dfs_solver.greedy.build_lineups] takes twelve parameters,
+[`select_portfolio`][dfs_solver.select.select_portfolio] eight, and most of
 them interact. This page is the short path through them:
-[`mlb_dfs_solver.recipes`][mlb_dfs_solver.recipes] bundles the parameters into
+[`dfs_solver.recipes`][dfs_solver.recipes] bundles the parameters into
 named intents — one per way of playing — and this page shows one recipe per
 contest type, what each chose, and which knob to reach for when the output is
 not what you want.
 
-A [`Recipe`][mlb_dfs_solver.recipes.Recipe] is a frozen dataclass of the same
+A [`Recipe`][dfs_solver.recipes.Recipe] is a frozen dataclass of the same
 explicit parameters, nothing more. Print it to see every choice. Override any
 field with `dataclasses.replace`. Its `.build()` and `.select()` are plain
 calls to the two functions above — the parity tests assert byte-identical
@@ -26,8 +26,8 @@ and diversity is actively wrong — the right play is the most probable roster,
 then the next.
 
 ```python
-from mlb_dfs_solver import recipes, score_lineups
-from mlb_dfs_solver.presets import DK_MLB_CLASSIC
+from dfs_solver import recipes, score_lineups
+from dfs_solver.presets import DK_MLB_CLASSIC
 
 r = recipes.cash(DK_MLB_CLASSIC, seed=1)
 lineups = r.build(pool)
@@ -78,9 +78,9 @@ differently:
 
 ```python
 from dataclasses import replace
-from mlb_dfs_solver import recipes
-from mlb_dfs_solver.presets import DK_MLB_CLASSIC
-from mlb_dfs_solver.spec import ConflictRule, GroupConstraint
+from dfs_solver import recipes
+from dfs_solver.presets import DK_MLB_CLASSIC
+from dfs_solver.spec import ConflictRule, GroupConstraint
 
 HITTERS = ("C", "SS", "2B", "3B", "1B", "OF")
 spec = replace(
@@ -137,8 +137,8 @@ lives on the *spec* — every stage prices per placement, so nothing else
 changes.
 
 ```python
-from mlb_dfs_solver.presets import DK_MLB_SHOWDOWN
-from mlb_dfs_solver.spec import GroupConstraint
+from dfs_solver.presets import DK_MLB_SHOWDOWN
+from dfs_solver.spec import GroupConstraint
 
 spec = replace(
     DK_MLB_SHOWDOWN,
@@ -199,6 +199,6 @@ guesses. The load-bearing ones:
 
 Everything on this page is a starting point. The measured tables behind each
 default are in the
-[`build_lineups`][mlb_dfs_solver.greedy.build_lineups] docstring and
+[`build_lineups`][dfs_solver.greedy.build_lineups] docstring and
 [how it works](concepts.md); the benchmarks that check the claims are in
 [benchmarks](benchmarks.md).

@@ -13,9 +13,9 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from mlb_dfs_solver.pool import PlayerPool
-from mlb_dfs_solver.presets import DK_MLB_CLASSIC
-from mlb_dfs_solver.spec import GroupConstraint, RosterSpec, Slot
+from dfs_solver.pool import PlayerPool
+from dfs_solver.presets import DK_MLB_CLASSIC
+from dfs_solver.spec import GroupConstraint, RosterSpec, Slot
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "benchmarks"))
 

@@ -84,10 +84,10 @@ jobs:
       # bindings crate, whose abi3-py311 feature then fails against whatever
       # python3 the runner happens to have.
       - name: cargo clippy
-        run: cargo clippy -p mlb-dfs-solver-core --manifest-path rust/Cargo.toml --all-targets -- -D warnings
+        run: cargo clippy -p dfs-solver-core --manifest-path rust/Cargo.toml --all-targets -- -D warnings
 
       - name: cargo test
-        run: cargo test --manifest-path rust/Cargo.toml -p mlb-dfs-solver-core
+        run: cargo test --manifest-path rust/Cargo.toml -p dfs-solver-core
 
       - if: matrix.python == '3.11'
         uses: taiki-e/install-action@cargo-llvm-cov
@@ -95,7 +95,7 @@ jobs:
         name: cargo llvm-cov
         run: >-
           cargo llvm-cov --manifest-path rust/Cargo.toml
-          -p mlb-dfs-solver-core --fail-under-lines 90
+          -p dfs-solver-core --fail-under-lines 90
 
       - uses: actions/upload-artifact@v4
         with:

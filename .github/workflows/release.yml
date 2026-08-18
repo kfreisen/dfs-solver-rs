@@ -66,7 +66,7 @@ jobs:
             echo "--- python $py"
             uv run --no-project --isolated --python "$py" \
               --with "$(echo dist/*.whl)" \
-              python -c "import mlb_dfs_solver; print(mlb_dfs_solver.__version__)"
+              python -c "import dfs_solver; print(dfs_solver.__version__)"
           done
 
       - uses: actions/upload-artifact@v4
@@ -83,7 +83,7 @@ jobs:
     # unrepeatable version number on PyPI.
     environment:
       name: pypi
-      url: https://pypi.org/p/mlb-dfs-solver
+      url: https://pypi.org/p/dfs-solver-rs
     permissions:
       id-token: write
       contents: write

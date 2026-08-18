@@ -1,6 +1,6 @@
 """Describing what makes a lineup legal.
 
-A [`RosterSpec`][mlb_dfs_solver.spec.RosterSpec] is the sport-independent description of
+A [`RosterSpec`][dfs_solver.spec.RosterSpec] is the sport-independent description of
 a contest: which slots a roster has, which positions may fill each, what the salary
 budget is, and how many players may share a key such as a team.
 
@@ -12,11 +12,11 @@ reason this generalizes past the sport it came from.
 Several shapes do not collapse into a group cap, and each gets its own mechanism:
 
 * A **showdown captain** is worth more and costs more than the same player in a
-  flex slot, so [`Slot`][mlb_dfs_solver.spec.Slot] carries score and salary
+  flex slot, so [`Slot`][dfs_solver.spec.Slot] carries score and salary
   multipliers.
 * **"No hitters against my starting pitcher"** depends on a *pair* of players — the
   pitcher's opponent matching the hitter's team — which is a join rather than a
-  grouping. [`ConflictRule`][mlb_dfs_solver.spec.ConflictRule] expresses it, and
+  grouping. [`ConflictRule`][dfs_solver.spec.ConflictRule] expresses it, and
   nothing turns it on unless you ask: it is a preference, not a contest rule, and
   a contrarian who wants that correlation is entitled to it.
 * **"Players from at least two different games"** counts how many key values are
@@ -121,7 +121,7 @@ class Slot:
             here. Every candidate for a slot is scaled by the same factor, so a
             non-negative multiplier cannot reorder them. It changes what the
             finished lineup is worth, which is what
-            [`PlayerPool.projection_of`][mlb_dfs_solver.pool.PlayerPool.projection_of]
+            [`PlayerPool.projection_of`][dfs_solver.pool.PlayerPool.projection_of]
             reports and what anything ranking lineups against each other needs.
         salary_multiplier: What this slot multiplies its occupant's salary by.
             `1.5` is a DraftKings showdown captain; FanDuel's MVP leaves salary
@@ -265,7 +265,7 @@ class GroupConstraint:
 class ConflictRule:
     """Two players may not be rostered together when their keys match.
 
-    This is the one rule shape a [`GroupConstraint`][mlb_dfs_solver.spec.GroupConstraint]
+    This is the one rule shape a [`GroupConstraint`][dfs_solver.spec.GroupConstraint]
     cannot express. A group cap counts players who share a value of *one* key; a
     conflict joins *two different* keys across a pair of players. "No hitters
     against my starting pitcher" is the pitcher's `opponent` matching the hitter's
@@ -278,8 +278,8 @@ class ConflictRule:
 
     ```python
     from dataclasses import replace
-    from mlb_dfs_solver.presets import DK_MLB_CLASSIC
-    from mlb_dfs_solver.spec import ConflictRule
+    from dfs_solver.presets import DK_MLB_CLASSIC
+    from dfs_solver.spec import ConflictRule
 
     spec = replace(
         DK_MLB_CLASSIC,
@@ -321,7 +321,7 @@ class RosterSpec:
         positions: Position names, in bit order. Determines the mask encoding.
         conflicts: Pairs of players forbidden from sharing a lineup, expressed as
             key joins. Empty by default and never populated by a preset — see
-            [`ConflictRule`][mlb_dfs_solver.spec.ConflictRule] for why the opt-in
+            [`ConflictRule`][dfs_solver.spec.ConflictRule] for why the opt-in
             is explicit.
     """
 

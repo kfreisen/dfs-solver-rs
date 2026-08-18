@@ -136,7 +136,7 @@ def render_timing_case(case_name: str, measurements: list[dict[str, Any]]) -> li
         )
     lines.append("")
 
-    ours = next((m for m in measurements if m["impl"] == "mlb_dfs_solver_rust"), None)
+    ours = next((m for m in measurements if m["impl"] == "dfs_solver_rust"), None)
     python = next((m for m in measurements if m["impl"] == "reference_python"), None)
     if case_name == "single-entry" and ours and python and python["median"] < ours["median"]:
         lines += [
@@ -300,7 +300,7 @@ def render_headline() -> str:
             and case.get("metric", "seconds") == "seconds"
         ]
         by_impl = {case["impl"]: case for case in timed}
-        ours = by_impl.get("mlb_dfs_solver_rust")
+        ours = by_impl.get("dfs_solver_rust")
         solver = by_impl.get("milp_ortools_cpsat")
         overlap_solver = by_impl.get("milp_ortools_cpsat_overlap")
         if not (ours and solver):

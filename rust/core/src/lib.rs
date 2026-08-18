@@ -3,7 +3,7 @@
 //! This crate is deliberately free of any Python dependency. Everything here is
 //! ordinary Rust operating on slices, which means it unit-tests and
 //! coverage-measures without an interpreter, and the binding layer in
-//! `mlb_dfs_solver-native` has nothing in it worth testing separately.
+//! `dfs_solver-native` has nothing in it worth testing separately.
 //!
 //! * [`roster`] — what makes a lineup legal: slots, eligibility, group caps.
 //! * [`greedy`] — randomized greedy construction of a diverse pool of lineups.

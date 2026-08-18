@@ -1,4 +1,4 @@
-# mlb_dfs_solver benchmarks
+# dfs-solver-rs benchmarks
 
 Not pytest. These are long by design — the contest-scale scenario alone is ten thousand
 sequential CP-SAT solves — and a test runner was the wrong home for them twice over: CI executed

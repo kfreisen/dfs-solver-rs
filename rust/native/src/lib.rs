@@ -1,23 +1,23 @@
-//! PyO3 bindings for `mlb-dfs-solver-core`.
+//! PyO3 bindings for `dfs-solver-core`.
 //!
 //! Marshalling only. Every algorithm lives in the core crate, which has no Python
 //! dependency and carries its own tests — so there is nothing here that needs
 //! testing from Rust, and `cargo llvm-cov` over the core is not diluted by glue.
 //!
 //! Nothing in this module is public API. Each function is wrapped by a typed,
-//! documented function in the `mlb_dfs_solver` Python package; the flat argument shapes
+//! documented function in the `dfs_solver` Python package; the flat argument shapes
 //! below are chosen for cheap marshalling, not for anyone to call by hand.
 
 use numpy::{IntoPyArray, PyArray1, PyArray2, PyReadonlyArray1};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 
-use mlb_dfs_solver_core::convert::{
+use dfs_solver_core::convert::{
     config_from_arrays, flatten_lineups, spec_from_arrays, ConfigArrays, SpecArrays,
 };
-use mlb_dfs_solver_core::greedy::{self, PlayerPool};
-use mlb_dfs_solver_core::select;
-use mlb_dfs_solver_core::simd;
+use dfs_solver_core::greedy::{self, PlayerPool};
+use dfs_solver_core::select;
+use dfs_solver_core::simd;
 
 /// Borrow a NumPy array as a contiguous slice.
 ///

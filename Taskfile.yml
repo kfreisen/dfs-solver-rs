@@ -94,7 +94,7 @@ tasks:
         cmd: |
           echo "--- python {{.ITEM}}"
           uv run --no-project --isolated --python "{{.ITEM}}" --with "$(echo dist/*.whl)" \
-            python -c "import mlb_dfs_solver as m; print(m.__version__, m.active_isa())"
+            python -c "import dfs_solver as m; print(m.__version__, m.active_isa())"
 
   lock:
     desc: Re-lock dependencies.

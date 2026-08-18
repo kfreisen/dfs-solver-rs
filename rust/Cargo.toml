@@ -1,11 +1,11 @@
 # Two crates, deliberately.
 #
-# `mlb-dfs-solver-core` holds every algorithm and has no pyo3 dependency at all. That is
-# what makes `cargo test -p mlb-dfs-solver-core` and `cargo llvm-cov` work with no Python
+# `dfs-solver-core` holds every algorithm and has no pyo3 dependency at all. That is
+# what makes `cargo test -p dfs-solver-core` and `cargo llvm-cov` work with no Python
 # interpreter, no libpython on the loader path, and no coverage noise from binding
 # glue.
 #
-# `mlb-dfs-solver-native` is the pyo3 extension: a `#[pymodule]`, some argument
+# `dfs-solver-native` is the pyo3 extension: a `#[pymodule]`, some argument
 # marshalling, and nothing else worth measuring.
 #
 # The single-crate version of this could not run its own Rust unit tests. Enabling

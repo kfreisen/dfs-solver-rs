@@ -1,8 +1,8 @@
-site_name: mlb-dfs-solver
+site_name: dfs-solver-rs
 site_description: "Fast roster optimization: randomized greedy construction and submodular portfolio selection, in Rust."
-site_url: https://kfreisen.github.io/mlb-dfs-solver/
-repo_url: https://github.com/kfreisen/mlb-dfs-solver
-repo_name: kfreisen/mlb-dfs-solver
+site_url: https://kfreisen.github.io/dfs-solver-rs/
+repo_url: https://github.com/kfreisen/dfs-solver-rs
+repo_name: kfreisen/dfs-solver-rs
 edit_uri: edit/main/docs/
 
 docs_dir: docs

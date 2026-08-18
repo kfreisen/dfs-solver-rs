@@ -42,7 +42,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from baselines.milp import solve_milp_ortools, solve_portfolio_ortools
 from baselines.reference import build_lineups_reference
 from baselines.selection import select_portfolio_reference
-from mlb_dfs_solver import __version__, build_lineups, score_lineups, select_portfolio
+from dfs_solver import __version__, build_lineups, score_lineups, select_portfolio
 from scenarios import SCENARIO_NAMES, Scenario, build_scenarios, scenario_by_name
 from simulate import simulate
 from slates import describe_lineups
@@ -189,7 +189,7 @@ def measure_scenario(scenario: Scenario, *, with_solver: bool, with_reference: b
 
     print(f"  {scenario.name:14s} kernel ...", end="", flush=True)
     seconds, lineups = measure(build_lineups, pool, spec, **scenario.build_kwargs)
-    record("mlb_dfs_solver_rust", seconds, lineups)
+    record("dfs_solver_rust", seconds, lineups)
     print(f" {seconds * 1e3:9.2f} ms  ({len(lineups)}/{scenario.entries})")
 
     if with_reference and scenario.reference and scenario.entries <= REFERENCE_MAX_ENTRIES:
@@ -282,7 +282,7 @@ def measure_selection(*, with_reference: bool, smoke: bool = False) -> list[dict
 
     print(f"  {'selection':14s} kernel ...", end="", flush=True)
     seconds, chosen = measure(select_portfolio, scores, mode="gpp", line=line, n_select=n_select)
-    record("mlb_dfs_solver_rust", seconds, chosen)
+    record("dfs_solver_rust", seconds, chosen)
     print(f" {seconds * 1e3:9.2f} ms  ({len(chosen)}/{n_select})")
 
     if with_reference:
@@ -359,7 +359,7 @@ def main() -> int:
     hw = hardware()
     report = {
         "schema": SCHEMA,
-        "package": "mlb_dfs_solver",
+        "package": "dfs_solver",
         "version": __version__,
         "git_sha": git_sha(),
         "timestamp": datetime.now(UTC).isoformat(),

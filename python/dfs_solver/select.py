@@ -1,6 +1,6 @@
 """Turning a pool of candidate lineups into a portfolio to enter.
 
-[`build_lineups`][mlb_dfs_solver.greedy.build_lineups] answers "which rosters are
+[`build_lineups`][dfs_solver.greedy.build_lineups] answers "which rosters are
 legal?" and deliberately does not answer "which are good?" — it returns the first
 distinct lineups it finds, in no useful order. On a slate where price and
 projection disagree, the median of those sits well below the best of them.
@@ -9,7 +9,7 @@ Selection is the other half. Generate far more candidates than you need, score
 them against simulated outcomes, and keep the set that works best *together*:
 
 ```python
-from mlb_dfs_solver import build_lineups, score_lineups, select_portfolio
+from dfs_solver import build_lineups, score_lineups, select_portfolio
 
 pool_of = build_lineups(pool, spec, num_lineups=20_000, seed=1)
 scores = score_lineups(pool, spec, pool_of, universe)  # (n_lineups, n_sims)
@@ -65,11 +65,11 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from mlb_dfs_solver import _native
+from dfs_solver import _native
 
 if TYPE_CHECKING:
-    from mlb_dfs_solver.pool import PlayerPool
-    from mlb_dfs_solver.spec import RosterSpec
+    from dfs_solver.pool import PlayerPool
+    from dfs_solver.spec import RosterSpec
 
 __all__ = [
     "Mode",
@@ -209,7 +209,7 @@ def tail_line(sim_scores: np.ndarray, quantile: float = 0.99) -> float:
 
     Kept for the case where the line genuinely does not move between outcomes.
     For judging lineups against a field, reach for
-    [`field_line`][mlb_dfs_solver.select.field_line] instead — pooling every
+    [`field_line`][dfs_solver.select.field_line] instead — pooling every
     outcome into one number mostly measures how high-scoring the slate was rather
     than how good the lineup is.
     """
@@ -238,12 +238,12 @@ def select_portfolio(
     Args:
         sim_scores: An `(n_candidates, n_outcomes)` array from `score_lineups`.
         mode: `"cash"`, `"gpp"`, or `"excess"` — or the matching
-            [`Mode`][mlb_dfs_solver.select.Mode] member. See the module docstring
+            [`Mode`][dfs_solver.select.Mode] member. See the module docstring
             — these are different objectives, not settings on one, and there is
             no default because the wrong one is confidently wrong.
         line: The score that has to be beaten. Either one value per outcome —
             which is what you almost always want, see
-            [`field_line`][mlb_dfs_solver.select.field_line] — or a single number
+            [`field_line`][dfs_solver.select.field_line] — or a single number
             broadcast across all of them, which is only right when the bar
             genuinely does not move.
         n_select: How many entries to choose. Fewer come back when no remaining
@@ -256,7 +256,7 @@ def select_portfolio(
             those named.
 
             Preferred over the construction-stage cap in
-            [`build_lineups`][mlb_dfs_solver.greedy.build_lineups]: this skips
+            [`build_lineups`][dfs_solver.greedy.build_lineups]: this skips
             over-cap candidates from a pool already built, rather than discarding
             from a portfolio being assembled, so it holds closer to `n_select`.
             The limit is still `floor(fraction * n_select)` appearances, so if

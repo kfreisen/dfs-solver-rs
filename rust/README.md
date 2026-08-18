@@ -1,4 +1,4 @@
-# mlb_dfs_solver — Rust workspace
+# dfs_solver — Rust workspace
 
 Two crates, deliberately.
 
@@ -19,7 +19,7 @@ build time, via the `features` key in `pyproject.toml`.
 ## Working here
 
 ```bash
-cargo test -p mlb-dfs-solver-core          # no Python needed
+cargo test -p dfs-solver-core          # no Python needed
 cargo clippy --all-targets -- -D warnings
 cargo fmt --all
 ```
@@ -34,7 +34,7 @@ uv sync --all-extras     # builds the extension as part of the install
 ## Coverage
 
 ```bash
-cargo llvm-cov -p mlb-dfs-solver-core --fail-under-lines 90
+cargo llvm-cov -p dfs-solver-core --fail-under-lines 90
 ```
 
 90 rather than the 95 the Python side holds to. The gap is the parallel merge and
@@ -51,7 +51,7 @@ cover is thin enough that the cost outweighs the signal.
 machine's instruction set into the wheel, so a wheel built on a runner with AVX-512
 executes an illegal instruction on a user's older CPU. It is a tempting one-line
 "free speedup" and it produces crash reports nobody can reproduce. The AVX2 kernels
-use runtime `is_x86_feature_detected!` dispatch instead, and `mlb_dfs_solver.active_isa()`
+use runtime `is_x86_feature_detected!` dispatch instead, and `dfs_solver.active_isa()`
 reports which path a given process took.
 
 **No `panic = "abort"`.** PyO3 converts Rust panics into Python exceptions, which

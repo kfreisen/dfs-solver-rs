@@ -9,16 +9,16 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-import mlb_dfs_solver
+import dfs_solver
 import numpy as np
 import pytest
 from baselines.reference import validity_report
 from conftest import make_records
-from mlb_dfs_solver import CONTRARIAN, STANDARD, JitterProfile, build_lineups
-from mlb_dfs_solver.greedy import assign_locks
-from mlb_dfs_solver.pool import PlayerPool
-from mlb_dfs_solver.presets import DK_NFL_SHOWDOWN
-from mlb_dfs_solver.spec import ConflictRule, GroupConstraint, RosterSpec, Slot
+from dfs_solver import CONTRARIAN, STANDARD, JitterProfile, build_lineups
+from dfs_solver.greedy import assign_locks
+from dfs_solver.pool import PlayerPool
+from dfs_solver.presets import DK_NFL_SHOWDOWN
+from dfs_solver.spec import ConflictRule, GroupConstraint, RosterSpec, Slot
 
 
 def test_returns_indices_shaped_by_the_roster(tiny_pool: PlayerPool, tiny_spec: RosterSpec) -> None:
@@ -120,18 +120,18 @@ def test_non_contiguous_input_is_accepted(tiny_pool: PlayerPool, tiny_spec: Rost
 
 
 def test_active_isa_reports_a_known_path() -> None:
-    assert mlb_dfs_solver.active_isa() in {"avx2", "scalar"}
+    assert dfs_solver.active_isa() in {"avx2", "scalar"}
 
 
 def test_native_version_is_reported() -> None:
-    assert mlb_dfs_solver.native_version()
+    assert dfs_solver.native_version()
 
 
 def test_public_names_are_all_importable() -> None:
-    # __all__ drifting from reality breaks `from mlb_dfs_solver import *` and, more
+    # __all__ drifting from reality breaks `from dfs_solver import *` and, more
     # importantly, the documented surface.
-    for name in mlb_dfs_solver.__all__:
-        assert hasattr(mlb_dfs_solver, name), name
+    for name in dfs_solver.__all__:
+        assert hasattr(dfs_solver, name), name
 
 
 # --- Slot multipliers ----------------------------------------------------
