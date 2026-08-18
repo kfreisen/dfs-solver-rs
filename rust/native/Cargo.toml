@@ -1,6 +1,6 @@
 [package]
 name = "mlb-dfs-solver-native"
-description = "PyO3 bindings for mlb_dfs_solver-core"
+description = "PyO3 bindings for mlb-dfs-solver-core"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

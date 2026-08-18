@@ -161,11 +161,11 @@ def score_lineups(
         raise ValueError(msg)
 
     return _native.score_lineups(
-        universe.ravel(),
-        int(universe.shape[1]),
-        np.ascontiguousarray(lineups.ravel(), dtype=np.uint32),
-        roster_size,
-        np.asarray(spec.score_multipliers(), dtype=np.float32),
+        universe=universe.ravel(),
+        n_outcomes=int(universe.shape[1]),
+        lineups=np.ascontiguousarray(lineups.ravel(), dtype=np.uint32),
+        roster_size=roster_size,
+        slot_multipliers=np.asarray(spec.score_multipliers(), dtype=np.float32),
     )
 
 
@@ -335,15 +335,15 @@ def select_portfolio(
         raise ValueError(msg)
 
     chosen = _native.select_portfolio(
-        scores.ravel(),
-        int(scores.shape[1]),
-        rosters,
-        roster_size,
-        limits,
-        int(n_select),
-        _MODES[mode],
-        line_values,
-        float(min_gain),
+        scores=scores.ravel(),
+        n_outcomes=int(scores.shape[1]),
+        rosters=rosters,
+        roster_size=roster_size,
+        exposure_limits=limits,
+        n_select=int(n_select),
+        mode=_MODES[mode],
+        line=line_values,
+        min_gain=float(min_gain),
     )
     return np.asarray(chosen, dtype=np.int64)
 
@@ -358,9 +358,9 @@ def portfolio_value(sim_scores: np.ndarray, chosen: np.ndarray, line: float = 0.
     scores = np.ascontiguousarray(sim_scores, dtype=np.float32)
     return float(
         _native.portfolio_value(
-            scores.ravel(),
-            int(scores.shape[1]),
-            np.ascontiguousarray(np.asarray(chosen).ravel(), dtype=np.uint32),
-            float(line),
+            scores=scores.ravel(),
+            n_outcomes=int(scores.shape[1]),
+            chosen=np.ascontiguousarray(np.asarray(chosen).ravel(), dtype=np.uint32),
+            threshold=float(line),
         )
     )

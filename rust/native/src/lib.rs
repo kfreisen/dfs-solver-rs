@@ -1,4 +1,4 @@
-//! PyO3 bindings for `mlb_dfs_solver-core`.
+//! PyO3 bindings for `mlb-dfs-solver-core`.
 //!
 //! Marshalling only. Every algorithm lives in the core crate, which has no Python
 //! dependency and carries its own tests — so there is nothing here that needs
@@ -50,7 +50,19 @@ fn active_isa() -> &'static str {
 ///
 /// Returns an `(n_lineups, roster_size)` array of indices into the player pool.
 /// Fewer rows than requested means the pool could not support more.
+///
+/// Every argument is keyword-only (the leading `*` in the signature). Several
+/// runs of adjacent parameters share a dtype, so a positional call that
+/// transposed two of them would type-check on both sides and silently build
+/// wrong lineups; requiring keywords makes that mistake unwritable.
 #[pyfunction]
+#[pyo3(signature = (*, projections, stddevs, salaries, ownership, positions,
+    slot_eligible, slot_counts, slot_score_multipliers, slot_salary_multipliers,
+    salary_cap, salary_floor, group_key_columns, group_max_counts,
+    group_min_distincts, group_min_stacks, group_secondary_min_stacks,
+    group_slot_masks, key_columns, conflict_left, conflict_right, num_lineups,
+    seed, noise, attempts_per_lineup, chunks, profiles, value_weight,
+    diversity_weight, lock_players, lock_slot_groups, exposure_limits))]
 #[allow(clippy::too_many_arguments)]
 fn build_lineups<'py>(
     py: Python<'py>,
@@ -160,6 +172,7 @@ fn build_lineups<'py>(
 ///
 /// Returns an `(n_lineups, n_outcomes)` float32 matrix.
 #[pyfunction]
+#[pyo3(signature = (*, universe, n_outcomes, lineups, roster_size, slot_multipliers))]
 fn score_lineups<'py>(
     py: Python<'py>,
     universe: PyReadonlyArray1<'py, f32>,
@@ -191,6 +204,8 @@ fn score_lineups<'py>(
 /// `mode` is `"excess"`, `"cover"` or `"cash"`; `line` is the score each reads.
 /// Returns candidate indices in the order chosen.
 #[pyfunction]
+#[pyo3(signature = (*, scores, n_outcomes, rosters, roster_size, exposure_limits,
+    n_select, mode, line, min_gain))]
 #[allow(clippy::too_many_arguments)]
 fn select_portfolio<'py>(
     py: Python<'py>,
@@ -204,16 +219,7 @@ fn select_portfolio<'py>(
     line: PyReadonlyArray1<'py, f32>,
     min_gain: f32,
 ) -> PyResult<Bound<'py, PyArray1<u32>>> {
-    let objective = match mode {
-        "excess" => select::Objective::Excess,
-        "cover" => select::Objective::Cover,
-        "cash" => select::Objective::Cash,
-        other => {
-            return Err(PyValueError::new_err(format!(
-                "unknown selection mode {other:?}; expected 'excess', 'cover' or 'cash'"
-            )))
-        }
-    };
+    let objective: select::Objective = mode.parse().map_err(PyValueError::new_err)?;
 
     let candidates = select::Candidates {
         scores: contiguous(&scores, "scores")?,
@@ -237,20 +243,16 @@ fn select_portfolio<'py>(
 
 /// The value of a portfolio under a selection objective.
 #[pyfunction]
+#[pyo3(signature = (*, scores, n_outcomes, chosen, threshold))]
 fn portfolio_value<'py>(
     scores: PyReadonlyArray1<'py, f32>,
     n_outcomes: usize,
     chosen: PyReadonlyArray1<'py, u32>,
     threshold: f32,
 ) -> PyResult<f32> {
-    let candidates = select::Candidates {
-        scores: contiguous(&scores, "scores")?,
-        n_outcomes,
-        rosters: &[],
-        roster_size: 0,
-    };
     Ok(select::portfolio_value(
-        &candidates,
+        contiguous(&scores, "scores")?,
+        n_outcomes,
         contiguous(&chosen, "chosen")?,
         threshold,
     ))

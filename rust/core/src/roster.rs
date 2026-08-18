@@ -178,7 +178,7 @@ impl ConflictGraph {
     }
 
     /// Number of players the graph is defined over; 0 when empty.
-    pub fn len(&self) -> usize {
+    fn len(&self) -> usize {
         self.adjacency.len()
     }
 }
@@ -292,7 +292,7 @@ impl GroupConstraint {
     }
 
     /// Whether this constraint imposes anything at all.
-    pub fn is_inert(&self) -> bool {
+    fn is_inert(&self) -> bool {
         self.max_count == UNCAPPED && self.min_distinct == 0 && self.min_stack == 0
     }
 }
@@ -485,11 +485,6 @@ impl RosterSpec {
         self.slots.iter().map(|s| s.count).sum()
     }
 
-    /// Number of distinct slot groups.
-    pub fn n_slot_groups(&self) -> usize {
-        self.slots.len()
-    }
-
     /// Check the specification is self-consistent and matches a pool of `n_players`.
     ///
     /// Called once per solve rather than per lineup. Every error here would
@@ -631,7 +626,7 @@ impl RosterSpec {
     }
 
     /// How many roster slots a slot mask covers, expanding multi-count groups.
-    pub fn counted_slots(&self, mask: SlotMask) -> usize {
+    fn counted_slots(&self, mask: SlotMask) -> usize {
         self.slots
             .iter()
             .enumerate()
@@ -697,7 +692,12 @@ impl RosterSpec {
 /// Counts live in one flat array indexed by `(group, key)` so that incrementing on
 /// each pick is a single add rather than a walk over the partial lineup — which is
 /// what the original did during repair, at O(roster_size) per candidate examined.
-pub struct GroupTally<'a> {
+///
+/// Crate-private on purpose: it is the mutable scratch state of the builder's
+/// fill loop, and its `add`/`remove`/`reset` only make sense interleaved with
+/// that loop — exposing them would invite a caller to desynchronize the counts
+/// from the lineup.
+pub(crate) struct GroupTally<'a> {
     spec: &'a RosterSpec,
     n_keys: usize,
     counts: Vec<u32>,

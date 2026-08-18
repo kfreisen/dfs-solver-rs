@@ -71,8 +71,7 @@
 //! portfolio as it grows. A "mean of the top q outcomes" objective sounds more
 //! principled and is not submodular — which outcomes count would depend on the
 //! set being chosen — so the guarantee above, and lazy evaluation with it, would
-//! be lost. Compute it from whatever you know about the field and hand it in;
-//! [`quantile`] will read one off a score matrix if you have nothing better.
+//! be lost. Compute it from whatever you know about the field and hand it in.
 
 use std::collections::BinaryHeap;
 
@@ -230,6 +229,25 @@ pub enum Objective {
     /// Mean probability that an entry reaches the line, judged independently.
     /// Cash games.
     Cash,
+}
+
+/// The wire spelling of each objective, as the binding receives it.
+///
+/// Parsed here rather than in the binding crate so the mapping is testable
+/// without an interpreter — which is the reason the crates are split at all.
+impl std::str::FromStr for Objective {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "excess" => Ok(Self::Excess),
+            "cover" => Ok(Self::Cover),
+            "cash" => Ok(Self::Cash),
+            other => Err(format!(
+                "unknown selection mode {other:?}; expected 'excess', 'cover' or 'cash'"
+            )),
+        }
+    }
 }
 
 impl Objective {
@@ -560,42 +578,25 @@ fn exceeds_exposure(
         .any(|&player| appearances[player as usize] >= limits[player as usize])
 }
 
-/// The score at a given quantile of a flat matrix of simulated outcomes.
-///
-/// A starting point for the line an [`Objective`] needs, when nothing better is
-/// known: the 99th percentile of what the candidate pool itself produces is a
-/// reasonable stand-in for "a score that wins a tournament".
-///
-/// It is only a stand-in. The score that actually wins is a property of the
-/// *field* — how many entries, built how — and a pool of your own candidates is
-/// not that. If you have a field model, its quantile is the number to use.
-pub fn quantile(scores: &[f32], q: f64) -> f32 {
-    if scores.is_empty() {
-        return 0.0;
-    }
-    let mut sorted: Vec<f32> = scores.to_vec();
-    sorted.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    let clamped = q.clamp(0.0, 1.0);
-    // Nearest-rank, which needs no interpolation and cannot invent a score no
-    // simulation produced.
-    let rank = (clamped * (sorted.len() - 1) as f64).round() as usize;
-    sorted[rank.min(sorted.len() - 1)]
-}
-
 /// The value of a portfolio under the selection objective.
 ///
 /// Exposed because it is what a caller compares two portfolios with, and
 /// recomputing it by hand invites a subtly different definition.
-pub fn portfolio_value(candidates: &Candidates<'_>, chosen: &[u32], threshold: f32) -> f32 {
-    if candidates.n_outcomes == 0 {
+///
+/// Takes the score matrix directly rather than a [`Candidates`]: rosters play no
+/// part in the value, and demanding a struct with fields this function never
+/// reads would force callers to fabricate them.
+pub fn portfolio_value(scores: &[f32], n_outcomes: usize, chosen: &[u32], threshold: f32) -> f32 {
+    if n_outcomes == 0 {
         return 0.0;
     }
-    let mut bar = vec![threshold; candidates.n_outcomes];
+    let mut bar = vec![threshold; n_outcomes];
     for &candidate in chosen {
-        raise_to(&mut bar, candidates.row(candidate as usize));
+        let start = candidate as usize * n_outcomes;
+        raise_to(&mut bar, &scores[start..start + n_outcomes]);
     }
     let total: f32 = bar.iter().map(|&b| b - threshold).sum();
-    total / candidates.n_outcomes as f32
+    total / n_outcomes as f32
 }
 
 /// The naive greedy, kept for tests.
@@ -603,6 +604,7 @@ pub fn portfolio_value(candidates: &Candidates<'_>, chosen: &[u32], threshold: f
 /// Recomputes every candidate's gain every round. Lazy evaluation must agree
 /// with this exactly — that is the whole claim it makes — and the only way to
 /// assert it is to have both.
+#[cfg(test)]
 pub fn select_portfolio_naive(
     candidates: &Candidates<'_>,
     config: &SelectConfig,
@@ -832,7 +834,7 @@ mod tests {
         let mut previous = f32::INFINITY;
         let mut running = 0.0f32;
         for k in 1..=chosen.len() {
-            let value = portfolio_value(&pool, &chosen[..k], 0.0);
+            let value = portfolio_value(pool.scores, pool.n_outcomes, &chosen[..k], 0.0);
             let gain = value - running;
             assert!(
                 gain <= previous + 1e-4,
@@ -917,8 +919,8 @@ mod tests {
         let scores = pool();
         let c = candidates(&scores);
         // Candidates 0 and 2 together: max is (10, 10, 40, 10), mean 17.5.
-        assert_eq!(portfolio_value(&c, &[0, 2], 0.0), 17.5);
-        assert_eq!(portfolio_value(&c, &[], 0.0), 0.0);
+        assert_eq!(portfolio_value(c.scores, c.n_outcomes, &[0, 2], 0.0), 17.5);
+        assert_eq!(portfolio_value(c.scores, c.n_outcomes, &[], 0.0), 0.0);
     }
 
     #[test]
@@ -1293,17 +1295,6 @@ mod tests {
     }
 
     #[test]
-    fn a_quantile_reads_off_the_sorted_scores() {
-        let scores = [5.0f32, 1.0, 4.0, 2.0, 3.0];
-        assert_eq!(quantile(&scores, 0.0), 1.0);
-        assert_eq!(quantile(&scores, 1.0), 5.0);
-        assert_eq!(quantile(&scores, 0.5), 3.0);
-        // Out-of-range quantiles clamp rather than panic.
-        assert_eq!(quantile(&scores, 2.0), 5.0);
-        assert_eq!(quantile(&[], 0.9), 0.0);
-    }
-
-    #[test]
     fn scoring_sums_a_lineup_across_the_universe() {
         // Two players, three outcomes.
         let universe = [1.0f32, 2.0, 3.0, 10.0, 20.0, 30.0];
@@ -1373,5 +1364,16 @@ mod tests {
         for error in errors {
             assert!(!error.to_string().is_empty(), "{error:?} renders empty");
         }
+    }
+
+    #[test]
+    fn objectives_parse_from_their_wire_spellings() {
+        assert_eq!("excess".parse(), Ok(Objective::Excess));
+        assert_eq!("cover".parse(), Ok(Objective::Cover));
+        assert_eq!("cash".parse(), Ok(Objective::Cash));
+        // The rejection message names the accepted spellings, because it is what
+        // the Python caller sees.
+        let err = "gpp".parse::<Objective>().unwrap_err();
+        assert!(err.contains("'excess', 'cover' or 'cash'"), "{err}");
     }
 }

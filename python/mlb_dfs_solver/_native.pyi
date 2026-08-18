@@ -15,6 +15,7 @@ def active_isa() -> str:
     """Return the SIMD path selected at runtime: ``"avx2"`` or ``"scalar"``."""
 
 def build_lineups(
+    *,
     projections: np.ndarray,
     stddevs: np.ndarray,
     salaries: np.ndarray,
@@ -50,6 +51,7 @@ def build_lineups(
     """Build lineups. Returns an ``(n, roster_size)`` int64 index array."""
 
 def score_lineups(
+    *,
     universe: np.ndarray,
     n_outcomes: int,
     lineups: np.ndarray,
@@ -59,6 +61,7 @@ def score_lineups(
     """Score lineups against a universe. Returns ``(n_lineups, n_outcomes)`` float32."""
 
 def select_portfolio(
+    *,
     scores: np.ndarray,
     n_outcomes: int,
     rosters: np.ndarray,
@@ -72,6 +75,7 @@ def select_portfolio(
     """Select a portfolio. Returns candidate indices in the order chosen."""
 
 def portfolio_value(
+    *,
     scores: np.ndarray,
     n_outcomes: int,
     chosen: np.ndarray,

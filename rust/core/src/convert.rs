@@ -195,15 +195,22 @@ pub fn spec_from_arrays(
 
     Ok(RosterSpec {
         slots: (0..n_slots)
-            .map(|i| SlotGroup {
-                eligible: arrays.slot_eligible[i],
-                count: arrays.slot_counts[i] as usize,
-                score_multiplier: arrays.slot_score_multipliers[i],
-                salary_multiplier: arrays.slot_salary_multipliers[i],
+            .map(|i| {
+                SlotGroup::multiplied(
+                    arrays.slot_eligible[i],
+                    arrays.slot_counts[i] as usize,
+                    arrays.slot_score_multipliers[i],
+                    arrays.slot_salary_multipliers[i],
+                )
             })
             .collect(),
         salary_cap: arrays.salary_cap,
         salary_floor: arrays.salary_floor,
+        // A field-by-field literal rather than the `GroupConstraint` factories:
+        // those are per-intent (`at_most`, `stack`, ...) while the arrays carry
+        // the general combination, and every field here arrives explicitly — the
+        // `UNCAPPED` defaults the factories fill in were already filled in by
+        // the caller that flattened the constraint.
         groups: (0..n_groups)
             .map(|i| GroupConstraint {
                 key_column: arrays.group_key_columns[i] as usize,

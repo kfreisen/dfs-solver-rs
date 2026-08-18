@@ -23,7 +23,9 @@ use rand_xoshiro::Xoshiro256PlusPlus;
 use rayon::prelude::*;
 use std::collections::HashSet;
 
-use crate::roster::{GroupTally, PositionMask, RosterSpec, SlotGroup, SpecError};
+use crate::roster::{GroupTally, PositionMask, RosterSpec, SpecError};
+#[cfg(test)]
+use crate::roster::SlotGroup;
 
 /// What every player costs in every slot group.
 ///
@@ -1422,6 +1424,7 @@ fn sample_range(rng: &mut Xoshiro256PlusPlus, (low, high): (f64, f64)) -> f64 {
 /// A lineup is stored in slot order with the group boundaries implicit, so
 /// anything that needs per-slot multipliers has to rebuild that pairing. Doing it
 /// in one place keeps the two scoring functions below from disagreeing about it.
+#[cfg(test)]
 fn with_slot_groups<'a>(
     spec: &'a RosterSpec,
     lineup: &'a [u32],
@@ -1435,8 +1438,10 @@ fn with_slot_groups<'a>(
 
 /// Total salary of a lineup, with each slot's multiplier applied.
 ///
-/// Exposed because callers routinely want it and recomputing it in Python defeats
-/// the point of building here.
+/// Test-side only: the Python wrapper computes salaries itself (reproducing the
+/// [`crate::roster::scaled_salary`] rounding contract), so nothing outside the
+/// tests calls this.
+#[cfg(test)]
 pub fn lineup_salary(pool: &PlayerPool<'_>, spec: &RosterSpec, lineup: &[u32]) -> i64 {
     with_slot_groups(spec, lineup)
         .map(|(player, slot)| {
@@ -1451,6 +1456,7 @@ pub fn lineup_salary(pool: &PlayerPool<'_>, spec: &RosterSpec, lineup: &[u32]) -
 /// player construction puts in a captain slot — every candidate for that slot is
 /// scaled alike — but it very much changes what the finished lineup is worth, and
 /// a showdown lineup scored without it is wrong by half a player.
+#[cfg(test)]
 pub fn lineup_projection(pool: &PlayerPool<'_>, spec: &RosterSpec, lineup: &[u32]) -> f64 {
     with_slot_groups(spec, lineup)
         .map(|(player, slot)| pool.projections[player] * slot.score_multiplier)
