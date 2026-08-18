@@ -19,7 +19,7 @@ members = ["core", "native"]
 resolver = "2"
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 # Set by pyo3 0.29, which requires 1.83. The core crate itself needs far less, but
 # a second MSRV for one unpublished crate is bookkeeping with no consumer — both
