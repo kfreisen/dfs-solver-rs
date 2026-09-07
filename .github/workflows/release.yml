@@ -25,7 +25,7 @@ jobs:
   guard:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
         with:
           python-version: '3.12'
@@ -43,7 +43,7 @@ jobs:
     needs: guard
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: astral-sh/setup-uv@v7
         with:
@@ -65,7 +65,7 @@ jobs:
             --with "$(echo dist/*.tar.gz)" --no-binary-package dfs-solver-rs \
             python -c "import dfs_solver; print(dfs_solver.__version__, dfs_solver.active_isa())"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: dist-sdist
           path: dist/
@@ -95,7 +95,7 @@ jobs:
           - { platform: macos-aarch64,  runner: macos-14,         target: aarch64 }
           - { platform: windows-x86_64, runner: windows-latest,   target: x64 }
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
         with:
           python-version: '3.12'
@@ -129,7 +129,7 @@ jobs:
               python -c "import dfs_solver; print(dfs_solver.__version__, dfs_solver.active_isa())"
           done
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: dist-${{ matrix.platform }}
           path: dist/
@@ -142,7 +142,7 @@ jobs:
     needs: [sdist, wheels]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: dist-*
           merge-multiple: true
@@ -199,7 +199,7 @@ jobs:
           fi
           exit $missing
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: dist
           path: dist/
@@ -218,12 +218,12 @@ jobs:
       id-token: write
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: dist
           path: dist
       - uses: pypa/gh-action-pypi-publish@release/v1
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           files: dist/*
           generate_release_notes: true
