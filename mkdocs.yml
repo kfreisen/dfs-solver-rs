@@ -71,6 +71,7 @@ nav:
   - Overview: index.md
   - How it works: concepts.md
   - Recipes: recipes.md
+  - Backtesting: backtest.md
   - Benchmarks: benchmarks.md
   - Examples: examples.md
   - API: api.md

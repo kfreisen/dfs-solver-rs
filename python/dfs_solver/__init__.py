@@ -13,7 +13,10 @@ lineups = build_lineups(pool, DK_MLB_CLASSIC, num_lineups=500, seed=1)
 
 Construction answers which rosters are *legal*, not which are good. To pick a
 portfolio, generate many more candidates than you need and select from them
-against simulated outcomes — see `dfs_solver.select`.
+against simulated outcomes — see `dfs_solver.select`. To find out what a set of
+lineups would have returned in contests that already happened — ranks, ties,
+payouts, ROI — see `dfs_solver.backtest`, which knows nothing about how they
+were chosen.
 
 The compiled kernel lives in `dfs_solver._native`, which is private: it takes flat
 arrays chosen for cheap marshalling and gives no diagnostics. Everything supported
@@ -27,6 +30,22 @@ from importlib.metadata import version as _distribution_version
 
 from dfs_solver._native import __version__ as _native_version
 from dfs_solver._native import active_isa
+from dfs_solver.backtest import (
+    Contest,
+    Entries,
+    FieldScores,
+    IllegalLineupError,
+    LedgerEntry,
+    PayoutTier,
+    RunManifest,
+    SlateContest,
+    assert_legal,
+    check_lineup,
+    realized_ranks_and_payouts,
+    rescore,
+    roi_table,
+    run_slate,
+)
 from dfs_solver.greedy import (
     CONTRARIAN,
     STANDARD,
@@ -63,6 +82,26 @@ __all__ = [
     "score_lineups",
     "select_portfolio",
     "tail_line",
+]
+
+# --- backtest: verifying lineups against contests that already happened.
+# Nothing below knows how a lineup was chosen. The full surface is in
+# `dfs_solver.backtest`; these are the names a first script reaches for.
+__all__ += [
+    "Contest",
+    "Entries",
+    "FieldScores",
+    "IllegalLineupError",
+    "LedgerEntry",
+    "PayoutTier",
+    "RunManifest",
+    "SlateContest",
+    "assert_legal",
+    "check_lineup",
+    "realized_ranks_and_payouts",
+    "rescore",
+    "roi_table",
+    "run_slate",
 ]
 
 # Read from the installed distribution rather than restated here. The compiled

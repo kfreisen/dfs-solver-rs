@@ -42,10 +42,16 @@ build_lineups()          score_lineups()            select_portfolio()
 You supply the middle stage — the `(players × outcomes)` matrix. Simulating a sport well means
 modelling that sport, and this library works for any of them.
 
-**What this package does not claim.** Nothing here tells you what a set of lineups would have
-won. That requires a simulator and a model of the field, neither of which is included, and a
-benchmark shipping its own would be grading its own fixture. The tables below measure generation
-time and describe what was generated. Which output suits your contest is your call.
+**What this package does not claim.** Nothing here predicts what a set of lineups *will* win.
+That requires a simulator and a model of the field, neither of which is included, and a benchmark
+shipping its own would be grading its own fixture. What `dfs_solver.backtest` does is the
+after-the-fact arithmetic: given lineups you already have and contests that already happened —
+the operator's payout table and the scores every other entry posted — it ranks yours into that
+field, settles ties as the operator does, and reduces the result to ROI and its calibration
+checks. It knows nothing about how the lineups were chosen, and the only "field model" it carries
+is the empirical pooled distribution of realized scores from earlier contests, walk-forward. The
+tables below measure generation time and describe what was generated. Which output suits your
+contest is your call.
 
 ## What's in it
 
@@ -68,6 +74,13 @@ time and describe what was generated. Which output suits your contest is your ca
 - Intent-named recipes (`dfs_solver.recipes`): typed bundles of the interrelated parameters,
   one per way of playing — cash, single-entry, GPP, candidate pool, showdown — each a printable
   dataclass whose `.build()` and `.select()` are plain calls to the functions above.
+- Backtesting (`dfs_solver.backtest`): verify lineups you already have against contests that
+  already happened. Payout tiers with strict validation, ranking into a realized field with
+  operator-style tie settlement, legality re-derived from the `RosterSpec` in plain Python, a
+  walk-forward empirical field model for expected payout, a column-store of entries with rank
+  kept separate from payout (so corrected payout tables rescore without a re-run), ROI /
+  ex-top / per-period / PIT / calibration reports, and reconciliation against your real contest
+  history. No projections, no ownership, no strategy — it cannot tell how a lineup was chosen.
 - Runtime AVX2 dispatch. Wheels are built portably; `dfs_solver.active_isa()` reports which path
   your machine took.
 
@@ -170,7 +183,10 @@ Full definitions, every scenario, every implementation and the hardware:
 
 No table here reports what a portfolio would have won, cashed, or returned. Those numbers need a
 simulator and a field model. This package supplies neither, so any such figure would come from a
-fixture written for the benchmark — and would move when the fixture was rewritten.
+fixture written for the benchmark — and would move when the fixture was rewritten. (The
+[backtest](https://kfreisen.github.io/dfs-solver-rs/backtest/) subpackage computes exactly those
+figures — but against *your* contests and *your* lineups, after the fact, and never as a
+benchmark of this package.)
 
 That limits what can be shown, and it is the honest limit. A solver's 150 lineups are higher
 projected; these are drawn from more of the slate. Which is worth more depends on your contest
