@@ -41,6 +41,8 @@ __all__ = [
     "DK_MLB_SHOWDOWN",
     "DK_NFL_CLASSIC",
     "DK_NFL_SHOWDOWN",
+    "DK_NHL_CLASSIC",
+    "DK_NHL_SHOWDOWN",
     "PRESETS",
 ]
 
@@ -152,10 +154,52 @@ DK_MLB_SHOWDOWN = RosterSpec(
 )
 
 
+# DraftKings NHL classic: two centers, three wingers, two defensemen, a goalie and a
+# skater utility. Left and right wing share one `W` position, which is how DraftKings
+# slots them; a source that still says LW/RW must map both to `W`.
+#
+# DraftKings also requires players from at least three different teams and from at
+# least two games. Measured on 2020-2022 FantasyLabs fields, no complete entered
+# lineup used fewer. Both rules need keys on every record, so, like the game rule
+# above, they are left for the caller:
+# `GroupConstraint(key="team", min_distinct=3)`, `GroupConstraint(key="game", min_distinct=2)`.
+# Goalie is listed after the skaters for the same reason pitchers trail in MLB:
+# the most expensive slot is priced against the remaining budget.
+DK_NHL_CLASSIC = RosterSpec(
+    positions=("C", "W", "D", "G"),
+    slots=(
+        Slot("C", ("C",), count=2),
+        Slot("D", ("D",), count=2),
+        Slot("W", ("W",), count=3),
+        Slot("G", ("G",)),
+        Slot("UTIL", ("C", "W", "D")),
+    ),
+    salary_cap=50_000,
+    salary_floor=0,
+    groups=(),
+)
+
+
+# The NHL single-game format: a 1.5x captain and five flex players, from both teams.
+# The both-teams rule is left off for the reason given on the showdown presets above.
+DK_NHL_SHOWDOWN = RosterSpec(
+    positions=("C", "W", "D", "G"),
+    slots=(
+        Slot("CPT", ("C", "W", "D", "G"), score_multiplier=1.5, salary_multiplier=1.5),
+        Slot("FLEX", ("C", "W", "D", "G"), count=5),
+    ),
+    salary_cap=50_000,
+    salary_floor=0,
+    groups=(),
+)
+
+
 PRESETS: dict[str, RosterSpec] = {
     "dk_mlb_classic": DK_MLB_CLASSIC,
     "dk_mlb_showdown": DK_MLB_SHOWDOWN,
     "dk_nfl_classic": DK_NFL_CLASSIC,
     "dk_nfl_showdown": DK_NFL_SHOWDOWN,
+    "dk_nhl_classic": DK_NHL_CLASSIC,
+    "dk_nhl_showdown": DK_NHL_SHOWDOWN,
 }
 """Every preset, by name."""
