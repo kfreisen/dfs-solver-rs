@@ -72,6 +72,52 @@ _DEFAULT_PROFILES: tuple[JitterProfile, ...] = (CONTRARIAN, STANDARD)
 _NO_PAIRS = np.empty((2, 0), dtype=np.uint32)
 _NO_PAIRS.flags.writeable = False
 
+
+def index_pairs(
+    conflict_pairs: Sequence[tuple[int, int]] | np.ndarray, n_players: int | None
+) -> np.ndarray:
+    """Validate caller-supplied `(i, j)` pairs and return them as an `(n_pairs, 2)` `int64` array.
+
+    The shape is checked, never reshaped. `PlayerPool.conflict_pairs` returns the
+    kernel's `(2, n_pairs)` layout, and passing that here used to be flattened and
+    re-paired silently: the left row and the right row were zipped into
+    neighbouring indices, which forbids unrelated players (linemates, same-team
+    hitters) and can make a stack unsatisfiable. A `(2, n)` array with `n != 2`
+    is now an error that names the fix. A `(2, 2)` array is read as two pairs,
+    one per row, like every other `(n, 2)` input.
+
+    `n_players=None` skips the range check: a legality check only asks whether
+    a lineup holds both players of a pair, and a pair naming an index outside the
+    pool can never be held.
+
+    Raises:
+        ValueError: If the input is not `(n, 2)`, or (with `n_players`) names an
+            index outside the pool.
+    """
+    extra = np.asarray(conflict_pairs, dtype=np.int64)
+    if extra.size == 0:
+        return np.empty((0, 2), dtype=np.int64)
+    if extra.ndim != 2 or extra.shape[1] != 2:
+        hint = (
+            " That is the (2, n_pairs) layout PlayerPool.conflict_pairs returns: pass `.T`,"
+            " or leave conflict_pairs out, since spec.conflicts is already resolved against"
+            " the pool."
+            if extra.ndim == 2 and extra.shape[0] == 2
+            else ""
+        )
+        msg = (
+            f"conflict_pairs must be (n_pairs, 2) pool-index pairs, got shape {extra.shape}.{hint}"
+        )
+        raise ValueError(msg)
+    if (extra < 0).any():
+        msg = "conflict_pairs must be non-negative pool indices"
+        raise ValueError(msg)
+    if n_players is not None and int(extra.max()) >= n_players:
+        msg = f"conflict_pairs names player index {int(extra.max())} but the pool has {n_players} players"
+        raise ValueError(msg)
+    return extra
+
+
 # Shared "no exposure caps" marker. An empty column is how the kernel is told to
 # skip the merge-time bookkeeping entirely.
 _NO_LIMITS = np.empty(0, dtype=np.uint32)
@@ -551,16 +597,7 @@ def build_lineups(
 
     pairs = _NO_PAIRS if not spec.conflicts else pool.conflict_pairs(spec)
     if conflict_pairs is not None:
-        extra = np.asarray(conflict_pairs, dtype=np.int64).reshape(-1, 2)
-        if extra.size and (extra < 0).any():
-            msg = "conflict_pairs must be non-negative pool indices"
-            raise ValueError(msg)
-        if extra.size and int(extra.max()) >= len(pool):
-            msg = (
-                f"conflict_pairs names player index {int(extra.max())} but the pool "
-                f"has {len(pool)} players"
-            )
-            raise ValueError(msg)
+        extra = index_pairs(conflict_pairs, len(pool))
         pairs = np.concatenate([pairs, extra.T.astype(np.uint32)], axis=1)
 
     assigned = assign_locks(pool, spec, locks) if locks else []

@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from dfs_solver.greedy import assign_locks
+from dfs_solver.greedy import assign_locks, index_pairs
 from dfs_solver.spec import scaled_salary
 
 if TYPE_CHECKING:
@@ -238,7 +238,7 @@ def check_lineup(
     problems.extend(_check_conflicts(pool, spec, players))
 
     if conflict_pairs is not None:
-        extra = np.asarray(conflict_pairs, dtype=np.int64).reshape(-1, 2)
+        extra = index_pairs(conflict_pairs, None)
         rostered = set(players)
         for i, j in extra.tolist():
             if i in rostered and j in rostered and i != j:
